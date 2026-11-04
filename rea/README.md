@@ -1,6 +1,6 @@
 # MEGA REAPER - BlastEm
 
-A local GPL-3.0-or-later modification of [ulalume/blastem](https://github.com/ulalume/blastem), based on commit `5702187402276e7f0aea2ad4e6784ffb187c8c10`. Retain `COPYING` and `COPYING.fork` when distributing. No cloud service, model key or ROM upload is involved. The upstream debugger, GDB remote, save states and scripted input remain available.
+A local GPL-3.0-or-later modification of **BlastEm by Mike Pavone and contributors**, through the [ulalume/blastem](https://github.com/ulalume/blastem) debugging fork, based on commit `5702187402276e7f0aea2ad4e6784ffb187c8c10`. The [original project](https://www.retrodev.com/blastem/) hosts its [official source in Mercurial](https://www.retrodev.com/repos/blastem); `ulalume/blastem` remains this repository's immediate GitHub fork parent. See the [project credits](../README.md#license-and-attribution). Retain `COPYING` and `COPYING.fork` when distributing. No cloud service, model key or ROM upload is involved. The upstream debugger, GDB remote, save states and scripted input remain available.
 
 ## Run
 

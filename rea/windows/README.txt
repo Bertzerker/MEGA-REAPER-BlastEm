@@ -38,3 +38,12 @@ The corresponding source is available at the same release tag:
 https://github.com/Bertzerker/MEGA-REAPER-BlastEm/releases
 
 Development documentation and original emulator manual are also included.
+
+Project attribution:
+BlastEm was created by Mike Pavone, with contributions from the BlastEm community.
+Original project: https://www.retrodev.com/blastem/
+Official Mercurial source: https://www.retrodev.com/repos/blastem
+MEGA REAPER builds on ulalume's debugging fork (GDB remote, scriptable control
+socket and embedded UI font): https://github.com/ulalume/blastem
+The REA capture, inspector and Windows launcher/package are MEGA REAPER additions.
+MEGA REAPER is independently maintained from the original BlastEm project.

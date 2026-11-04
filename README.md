@@ -2,7 +2,7 @@
 
 A Genesis / Mega Drive emulator adapted for AI-assisted reverse engineering, with direct VDP capture and six synchronized inspection views in one browser window.
 
-Built on [ulalume/blastem](https://github.com/ulalume/blastem), base commit `5702187402276e7f0aea2ad4e6784ffb187c8c10`. The original emulator documentation remains in [README](README).
+Based on **BlastEm by Mike Pavone and contributors**, through the [ulalume/blastem](https://github.com/ulalume/blastem) debugging fork, base commit `5702187402276e7f0aea2ad4e6784ffb187c8c10`. Visit the [original BlastEm project](https://www.retrodev.com/blastem/) and its [official Mercurial source repository](https://www.retrodev.com/repos/blastem). The original emulator documentation remains in [README](README).
 
 ## What it shows
 
@@ -45,5 +45,11 @@ npm test --prefix rea
 The [specification](rea/SPEC.md) records delivered features and future work, including instruction/DMA provenance, replay control and game-specific collision adapters. Automatic hitbox recovery and a complete AI analysis agent are not implemented.
 
 ## License and attribution
+
+- **Original emulator:** [BlastEm](https://www.retrodev.com/blastem/) by Mike Pavone and contributors supplies the emulation core. Its official source is hosted in [Mercurial on retrodev.com](https://www.retrodev.com/repos/blastem).
+- **Immediate upstream:** [ulalume/blastem](https://github.com/ulalume/blastem) adds the GDB remote, scriptable control socket and embedded UI font that this project builds on.
+- **MEGA REAPER additions:** direct VDP capture, the synchronized six-view REA inspector, inspection API, transport optimizations and portable Windows launcher/package.
+
+GitHub shows this repository as a fork of `ulalume/blastem`, our immediate upstream. That badge identifies the GitHub fork relationship; the original BlastEm project is hosted outside GitHub. MEGA REAPER is a derivative project, independently maintained from the original BlastEm project.
 
 Distributed under **GPL-3.0-or-later**; see [COPYING](COPYING). Preserve the upstream notices and [COPYING.fork](COPYING.fork), which covers ulalume's public-domain dedication for that fork's own changes. MEGA REAPER's REA additions remain GPL-3.0-or-later. The bundled Inter typeface retains its [SIL Open Font License](nuklear_ui/Inter-LICENSE.txt).
