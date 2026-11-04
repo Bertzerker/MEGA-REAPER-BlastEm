@@ -13,7 +13,13 @@ Built on [ulalume/blastem](https://github.com/ulalume/blastem), base commit `570
 
 All six graphics views come from one emulation pass and travel together as one atlas. Captured colors preserve mid-frame palette, scrolling and Window changes. The isolated views show inputs before other layers hide them. Optional VRAM tiles and SAT bounds are separately labeled snapshot diagnostics; SAT rectangles are not gameplay hitboxes.
 
-## Run on Windows
+## Ready-to-run Windows build
+
+Download the **Windows x64 portable ZIP** from [GitHub Releases](https://github.com/Bertzerker/MEGA-REAPER-BlastEm/releases/latest), extract the entire archive, and double-click **MEGA REAPER.exe**. Choose a local ROM, then copy the inspector URL into the Codex in-app browser. Closing the launcher stops its emulator and server.
+
+The ZIP includes the compiled emulator, native launcher, REA interface, Node.js runtime, production dependencies, SDL2 and license notices. No Node installation, npm command, administrator access or PowerShell policy change is required. ROMs are not included.
+
+## Run from source on Windows
 
 Build `blastem-raster.exe` and place `SDL2.dll` beside it, following the [build instructions](rea/README.md#build-and-validate). Then run from the repository root:
 

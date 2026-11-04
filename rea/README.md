@@ -4,6 +4,8 @@ A local GPL-3.0-or-later modification of [ulalume/blastem](https://github.com/ul
 
 ## Run
 
+For the portable Windows release, extract the entire ZIP and run `MEGA REAPER.exe`. It includes the required Node.js runtime, locked production dependency and native DLL. The native launcher selects a local ROM, shows the inspector URL and owns both child processes in a Windows job: normal close and abnormal launcher termination cannot leave its children running. No other browser is opened automatically. See the package's `README.txt`.
+
 From the `blastem` directory:
 
 ```powershell
@@ -66,6 +68,10 @@ Offsets accept decimal or `0x` hex. RAM offset zero is bus address `0xFF0000`. W
 The server binds loopback, validates HTTP Host and WebSocket Origin, and exposes no hardware-write or execution-control endpoint. `BLASTEM_REA_STREAM_PORT` selects native streaming. With that unset, `BLASTEM_REA_DIR` retains the older atomic JSON-file exporter for diagnostic/API workflows; it is not the high-rate atlas path. `BLASTEM_REA_CAPTURE_EVERY` is read once at startup (1–60, default 1 for streaming). Unset both capture/stream variables to disable REA.
 
 ## Build and validate
+
+`Build-Windows.ps1 -Version 0.1.0` creates the portable ZIP from the built emulator, SDL2 and GLEW development files. It downloads the pinned official Node.js 24.20.0 x64 archive and verifies its pinned SHA-256, installs only locked production dependencies without lifecycle scripts, compiles the Win32 launcher using MinGW in WSL, includes license notices, and writes a source-commit/file-hash manifest plus a ZIP checksum. Add `-BuildEmulator -PythonPath '/mnt/c/path/to/python.exe'` to run the native emulator build too. An existing output directory is never overwritten implicitly. The inherited upstream `v*` release workflow does not package REA; MEGA REAPER release tags use `mega-reaper-v*` instead.
+
+Test an extracted release with `Test-WindowsPackage.ps1 -Archive <zip> -Rom <original-diagnostic.bin>`. Use the original basic H40/H32 diagnostic from `make_test_rom.py`; this checks actual VDP colors/RAM, every winning source pixel, all packaged file hashes, bundled Node with the global runtime removed from PATH, paths with spaces/Unicode, duplicate-launch rejection and child-process cleanup. It refuses to run while another BlastEm instance exists. Native launcher options `--headless --duration-ms <n>` support bounded automation without opening a window.
 
 The local Windows build is cross-compiled using Ubuntu WSL and MinGW. SDL2 2.30.9 and GLEW 2.2.0 development distributions are in `sdl/` and `glew/`; see upstream `.github/workflows/build.yml` for acquisition. GNU make and MinGW are required. Use the user's verified interpreter for CPU/font generation:
 

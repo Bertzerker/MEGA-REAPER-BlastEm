@@ -6,6 +6,13 @@ $romPath = (Resolve-Path -LiteralPath $Rom).Path
 $exe = Join-Path $root 'blastem-raster.exe'
 if (!(Test-Path -LiteralPath $exe)) { throw 'Build blastem-raster.exe first; see rea/README.md.' }
 if (!(Test-Path -LiteralPath (Join-Path $root 'SDL2.dll'))) { throw 'Copy SDL2.dll beside blastem.exe; see rea/README.md.' }
+$nodeExe = Join-Path $root 'runtime\node.exe'
+if (!(Test-Path -LiteralPath $nodeExe)) {
+    $nodeCommand = Get-Command node.exe -ErrorAction SilentlyContinue
+    if (!$nodeCommand) { throw 'Node.js is missing. Use the complete portable Windows ZIP or install Node.js for a source checkout.' }
+    $nodeExe = $nodeCommand.Source
+}
+if (!(Test-Path -LiteralPath (Join-Path $PSScriptRoot 'node_modules\ws\index.js'))) { throw 'REA dependencies are missing. Extract the entire portable ZIP or run npm ci --prefix rea in a source checkout.' }
 # Fail before launching a game when another inspector already owns either port.
 foreach ($reaPort in @($Port,($Port+1))) {
     $probe = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback,$reaPort)
@@ -29,7 +36,11 @@ $emulator = Start-Process -FilePath $exe -ArgumentList ('"' + $romPath + '"') -W
 Write-Host "Inspector: http://127.0.0.1:$Port"
 Write-Host 'Open in the Codex in-app browser. Ctrl+C stops this inspector and its emulator.'
 if (!$NativeWindow) { Write-Host 'Browser-only display; add -NativeWindow for native keyboard/gamepad interaction.' }
-try { & node (Join-Path $PSScriptRoot 'server.mjs') }
+try { & $nodeExe (Join-Path $PSScriptRoot 'server.mjs') }
 finally {
-    if (!$emulator.HasExited) { Stop-Process -InputObject $emulator -ErrorAction SilentlyContinue }
+    if (!$emulator.HasExited) {
+        $closeSent = $emulator.CloseMainWindow()
+        if (!$closeSent -or !$emulator.WaitForExit(2000)) { Stop-Process -InputObject $emulator -ErrorAction SilentlyContinue }
+        $emulator.WaitForExit(5000) | Out-Null
+    }
 }
