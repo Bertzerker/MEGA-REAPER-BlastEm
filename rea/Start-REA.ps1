@@ -1,4 +1,4 @@
-param([Parameter(Mandatory=$true)][string]$Rom, [ValidateRange(1,65534)][int]$Port=8765,
+param([Parameter(Mandatory=$true)][string]$Rom, [ValidateRange(1,65533)][int]$Port=8765,
     [ValidateRange(1,60)][int]$CaptureEvery=1, [switch]$NativeWindow)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
@@ -14,7 +14,7 @@ if (!(Test-Path -LiteralPath $nodeExe)) {
 }
 if (!(Test-Path -LiteralPath (Join-Path $PSScriptRoot 'node_modules\ws\index.js'))) { throw 'REA dependencies are missing. Extract the entire portable ZIP or run npm ci --prefix rea in a source checkout.' }
 # Fail before launching a game when another inspector already owns either port.
-foreach ($reaPort in @($Port,($Port+1))) {
+foreach ($reaPort in @($Port,($Port+1),($Port+2))) {
     $probe = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback,$reaPort)
     try { $probe.Start() }
     catch { throw "REA port $reaPort is already in use. Reuse the running inspector or choose -Port." }
@@ -26,6 +26,7 @@ $env:BLASTEM_REA_DIR = Join-Path $PSScriptRoot 'session'
 $env:PORT = "$Port"
 $env:BLASTEM_REA_CAPTURE_EVERY = "$CaptureEvery"
 $env:BLASTEM_REA_STREAM_PORT = "$($Port+1)"
+$env:BLASTEM_REA_CONTROL_PORT = "$($Port+2)"
 $env:BLASTEM_REA_BROWSER_ONLY = if ($NativeWindow) { '0' } else { '1' }
 New-Item -ItemType Directory -Force $env:BLASTEM_REA_DIR | Out-Null
 # A stale capture must not appear to come from the new emulator instance.

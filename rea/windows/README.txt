@@ -18,8 +18,8 @@ Optional command line:
   "MEGA REAPER.exe" --native-window "C:\Games\My Game.md"
 
 Browser-only display is the default. --native-window enables a separate native
-game window with keyboard/gamepad interaction. The browser inspector remains
-read-only. The native launcher does not automatically choose another browser.
+game window with keyboard/gamepad interaction. The REA page includes movie
+controls and an optional keyboard controller. The launcher does not choose another browser.
 An existing BlastEm process or occupied port prevents another launch.
 
 The PowerShell alternative is rea\Start-REA.ps1; it uses runtime\node.exe when
@@ -38,6 +38,20 @@ The corresponding source is available at the same release tag:
 https://github.com/Bertzerker/MEGA-REAPER-BlastEm/releases
 
 Development documentation and original emulator manual are also included.
+
+Investigation movies and comments:
+Enter a title and choose "Record new movie" on the REA page. Use Play, Pause,
+Step frame and Speed (0.25x to 4x) to control emulation. Stop recording before
+replay or ZIP export. Replay starts at the saved checkpoint and requires the
+same ROM, emulator executable and configuration. The original release build
+should be preserved alongside important movies.
+
+"Comment on displayed frame" freezes inspection and saves that exact render,
+six-view atlas and memory/register snapshot as a draft. Write Markdown and use
+the JSON/Mermaid insertion buttons, Preview, then Save comment. Movie + notes
+ZIP export includes the checkpoint, inputs, comments, PNGs and snapshot JSON.
+Movies and comments persist locally in rea\session\; no ROM is exported.
+Offline preview libraries and their license notices are in rea\public\vendor\.
 
 Project attribution:
 BlastEm was created by Mike Pavone, with contributions from the BlastEm community.

@@ -10,6 +10,8 @@ Based on **BlastEm by Mike Pavone and contributors**, through the [ulalume/blast
 - Sprite, Plane A, Plane B and Window inputs captured from the VDP pipeline.
 - A source/priority map showing which input won each pixel.
 - Live memory/register inspection, frozen evidence, pixel selection and snapshot export.
+- Input movie recording/replay, play/pause, frame step and 0.25×–4× speed controls.
+- Persistent frame comments with Markdown, JSON code blocks, Mermaid previews, and captured render/memory evidence.
 
 All six graphics views come from one emulation pass and travel together as one atlas. Captured colors preserve mid-frame palette, scrolling and Window changes. The isolated views show inputs before other layers hide them. Optional VRAM tiles and SAT bounds are separately labeled snapshot diagnostics; SAT rectangles are not gameplay hitboxes.
 
@@ -25,10 +27,19 @@ Build `blastem-raster.exe` and place `SDL2.dll` beside it, following the [build 
 
 ```powershell
 npm ci --prefix rea
+npm run build:notes --prefix rea
 ./rea/Start-REA.ps1 -Rom 'C:/path/to/game.md'
 ```
 
-Open **http://127.0.0.1:8765/** in the Codex in-app browser. The default browser-only display avoids a redundant native GPU presentation. Use `-NativeWindow` for a separate native game window with keyboard/gamepad interaction. The browser inspector is read-only. Ctrl+C stops the launcher-owned emulator and inspector. The launcher rejects an already-running BlastEm instance.
+Open **http://127.0.0.1:8765/** in the Codex in-app browser. The default browser-only display avoids a redundant native GPU presentation. The page has movie transport controls and an optional keyboard controller. Use `-NativeWindow` for a separate native game window with keyboard/gamepad interaction. Ctrl+C stops the launcher-owned emulator and inspector. The launcher rejects an already-running BlastEm instance.
+
+## Document an investigation
+
+Enter a title and choose **Record new movie**. Enable **Keyboard controller** to play in the browser, or use the native window's controller. **Pause** stops emulation, **Step frame** advances one frame, and **Speed** changes the emulation/playback rate. **Stop movie** closes the input log; select a saved movie and choose **Replay from start** to restore its starting checkpoint and replay its inputs.
+
+Choose **Comment on displayed frame** to preserve that capture's composite render, six-view atlas and memory/register snapshot. Write Markdown, insert fenced JSON or Mermaid blocks, preview, then save. Comments stay linked to the movie ID, movie frame and capture ID. **Export movie + notes ZIP** downloads the checkpoint, input log, notes, PNGs and compressed snapshot JSON together. Everything is stored locally under `rea/session/`; ROMs are not included in exports.
+
+Movies currently support standard Genesis cartridges with two 3/6-button controllers. Replay requires the exact ROM and emulator executable used for recording. This first movie implementation does not include rerecording, editable input timelines, rewind or movies from other emulator formats. See [movie details and limitations](rea/README.md#movies-and-frame-comments).
 
 No commercial ROMs, local captures, dependency downloads or compiled binaries are included. Supply your own ROM locally.
 
@@ -36,13 +47,13 @@ No commercial ROMs, local captures, dependency downloads or compiled binaries ar
 
 The tested Windows configuration sustained **59.92 unique updates/s** across all six views over three minutes with Elemental Master (USA), with zero native capture gaps, delivery skips, browser drops or underruns. The highest sampled p95 frame interval was **17.1 ms**. This is the Genesis NTSC source rate; the presentation buffer adds about 100 ms of latency.
 
-The implementation uses specialized capture writes, touched-row resets, a persistent nonblocking TCP stream, lossless pixel-run atlas transport and one WebGL canvas. Twenty-one JavaScript tests, native capture tests, and H40/H32 diagnostic ROM checks validate the implementation. See [measurements, supported modes and limitations](rea/README.md).
+The implementation uses specialized capture writes, touched-row resets, a persistent nonblocking TCP stream, lossless pixel-run atlas transport and one WebGL canvas. Twenty-four JavaScript tests, native capture tests, and H40/H32 diagnostic ROM checks validate the implementation. See [measurements, supported modes and limitations](rea/README.md).
 
 ```powershell
 npm test --prefix rea
 ```
 
-The [specification](rea/SPEC.md) records delivered features and future work, including instruction/DMA provenance, replay control and game-specific collision adapters. Automatic hitbox recovery and a complete AI analysis agent are not implemented.
+The [specification](rea/SPEC.md) records delivered features and future work, including instruction/DMA provenance, replay tracing and game-specific collision adapters. Automatic hitbox recovery and a complete AI analysis agent are not implemented.
 
 ## License and attribution
 

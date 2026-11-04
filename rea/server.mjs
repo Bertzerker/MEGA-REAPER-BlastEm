@@ -1,4 +1,4 @@
-// Local, read-only snapshot API and bounded atlas stream. GPL-3.0-or-later.
+// Local snapshot API, movie controls and bounded atlas stream. GPL-3.0-or-later.
 import http from 'node:http';
 import net from 'node:net';
 import {WebSocketServer,WebSocket} from 'ws';
@@ -10,8 +10,10 @@ import {fields} from './public/transport.mjs';
 import {pack,unpack,jsonSnapshot,FrameReader} from './protocol.mjs';
 import {AtlasRenderer} from './atlas.mjs';
 import {AtlasEncoder} from './public/rle.mjs';
+import {MovieStore} from './movie.mjs';
 const here = path.dirname(fileURLToPath(import.meta.url));
-export function createServer(dir) {
+export function createServer(dir,options={}) {
+  const movies=new MovieStore(dir,{port:Number(process.env.BLASTEM_REA_CONTROL_PORT),...options.movie});
   const history = new Map();
   const pinned = new Map();
   let cached, stamp, loading, live;
@@ -27,6 +29,7 @@ export function createServer(dir) {
   function ingest(packet){
     const started=performance.now();
     const s=unpack(packet);
+    options.onCapture?.(s);
     if(s.schema!==1||!Number.isInteger(s.width)||s.width<1||s.width>347||!Number.isInteger(s.height)||s.height<1||s.height>512
       ||s.regs.length!==24||s.vram.length!==65536||s.cram.length!==128||s.ram.length!==65536||s.zram.length!==8192
       ||![80,128].includes(s.vsram.length)||s.rgb.length!==s.width*s.height*3)throw Error('Invalid native snapshot');
@@ -86,8 +89,30 @@ export function createServer(dir) {
     try {
       // Prevent arbitrary Host headers/DNS rebinding. Server binds loopback only.
       if (!/^127\.0\.0\.1:\d+$/.test(req.headers.host || '')) return send(403,{error:'Use 127.0.0.1'});
-      if (req.method !== 'GET') return send(405,{error:'Read-only API'});
       const u = new URL(req.url,'http://127.0.0.1');
+      if(req.method==='POST'){
+        if(!['/api/movie','/api/comments'].includes(u.pathname)&&!/^\/api\/comments\/[^/]+$/.test(u.pathname))return send(405,{error:'Read-only endpoint'});
+        if(req.headers.origin!==`http://${req.headers.host}`||!/^application\/json(?:;|$)/i.test(req.headers['content-type']||''))return send(403,{error:'Same-origin JSON request required'});
+        let text='';for await(const chunk of req){text+=chunk;if(Buffer.byteLength(text)>131072)throw Object.assign(Error('Request too large'),{status:413});}
+        const body=JSON.parse(text),notePath=u.pathname.match(/^\/api\/comments\/([^/]+)$/);
+        if(u.pathname==='/api/movie')return send(200,await movies.control(body));
+        if(u.pathname==='/api/comments'){
+          const raw=history.get(body.snapshot)||pinned.get(body.snapshot);
+          return send(201,await movies.annotate(raw,body));
+        }
+        if(notePath)return send(200,await movies.updateNote(notePath[1],body));
+        return send(405,{error:'Unknown write endpoint'});
+      }
+      if(req.method!=='GET')return send(405,{error:'Method not allowed'});
+      if(u.pathname==='/api/movie')return send(200,await movies.status());
+      if(u.pathname==='/api/movies')return send(200,await movies.movies());
+      if(u.pathname==='/api/comments')return send(200,await movies.comments());
+      const artifact=u.pathname.match(/^\/api\/comments\/([^/]+)\/([^/]+)$/),movieExport=u.pathname.match(/^\/api\/movies\/([^/]+)\/export$/);
+      if(artifact||movieExport){
+        const file=artifact?.[2]||'movie.zip',bytes=artifact?await movies.artifact(artifact[1],file):await movies.exportMovie(movieExport[1]);
+        res.writeHead(200,{'Content-Type':file.endsWith('.png')?'image/png':file.endsWith('.gz')?'application/gzip':file.endsWith('.zip')?'application/zip':file.endsWith('.json')?'application/json':'text/markdown; charset=utf-8',
+          'Cache-Control':'no-store','Content-Disposition':`${file.endsWith('.png')?'inline':'attachment'}; filename="${file}"`,'X-Content-Type-Options':'nosniff'});return res.end(bytes);
+      }
       if (u.pathname.startsWith('/api/')) {
         if(u.pathname==='/api/metrics'){
           const sorted=[...pipelineTimes].sort((a,b)=>a-b);
@@ -135,11 +160,11 @@ export function createServer(dir) {
         }
         return send(404,{error:'Unknown endpoint'});
       }
-      const files = {'/':'index.html','/app.mjs':'app.mjs','/decoder.mjs':'decoder.mjs','/renderer.mjs':'renderer.mjs','/transport.mjs':'transport.mjs','/presenter.mjs':'presenter.mjs','/cadence.mjs':'cadence.mjs','/rle.mjs':'rle.mjs','/style.css':'style.css'};
-      const file = files[u.pathname];
+      const files = {'/':'index.html','/app.mjs':'app.mjs','/decoder.mjs':'decoder.mjs','/renderer.mjs':'renderer.mjs','/transport.mjs':'transport.mjs','/presenter.mjs':'presenter.mjs','/cadence.mjs':'cadence.mjs','/rle.mjs':'rle.mjs','/style.css':'style.css','/movie-ui.mjs':'movie-ui.mjs'};
+      const file = files[u.pathname]||(/^\/vendor\/[a-zA-Z0-9_.-]+\.(?:js|mjs)$/.test(u.pathname)?u.pathname.slice(1):null);
       if (!file) return send(404,{error:'Not found'});
       res.writeHead(200,{'Content-Type':file.endsWith('.html')?'text/html':file.endsWith('.css')?'text/css':'text/javascript',
-        'Cache-Control':'no-store','Content-Security-Policy':`default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self' ws://${req.headers.host}; object-src 'none'; frame-ancestors 'none'`});
+        'Cache-Control':'no-store','Content-Security-Policy':`default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' ws://${req.headers.host}; object-src 'none'; frame-ancestors 'none'; base-uri 'none'`});
       res.end(await readFile(path.join(here,'public',file)));
     } catch(e) { send(e.status || 400,{error:e.message}); }
   });
@@ -161,7 +186,14 @@ export function createServer(dir) {
     });
     streamListener.once('error',reject);streamListener.listen(port,'127.0.0.1',()=>resolve(streamListener.address()));
   });
-  server.on('close',()=>{for(const ws of wss.clients)ws.terminate();wss.close();producer?.destroy();streamListener?.close();});
+  // Close upgraded sockets before awaiting HTTP close; an open viewer must not
+  // keep an owned session alive during shutdown.
+  let closing=false;
+  const close=server.close.bind(server);
+  server.close=(...args)=>{
+    if(!closing){closing=true;for(const ws of wss.clients)ws.terminate();wss.close();producer?.destroy();streamListener?.close();}
+    return close(...args);
+  };
   return server;
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

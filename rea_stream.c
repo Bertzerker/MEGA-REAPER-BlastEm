@@ -4,6 +4,7 @@
  */
 #include "rea_stream.h"
 #include "rea_raster.h"
+#include "rea_movie.h"
 #include "genesis.h"
 #include "net.h"
 #include <stdlib.h>
@@ -139,7 +140,7 @@ void rea_stream_capture(vdp_context *v, unsigned width, unsigned height, uint64_
 	int length = snprintf(header, sizeof(header),
 		"{\"metadata\":{\"schema\":1,\"id\":\"%llu-%u-%llu\",\"frame\":%u,"
 		"\"vdp_cycles\":%u,\"cpu_cycles\":%u,\"width\":%u,\"height\":%u,"
-		"\"nominal_hz\":%.6f,"
+		"\"nominal_hz\":%.6f,\"movie\":%s,"
 		"\"border_left\":%u,\"border_top\":%u,\"active_height\":%u,"
 		"\"mode5\":%s,\"interlace\":%s,\"sprite_collision_flag\":%s,"
 		"\"raster\":{\"valid\":%s,\"complete\":%s,\"covered_pixels\":%u,\"width\":%u,\"height\":%u,\"field_even\":%s,"
@@ -147,7 +148,7 @@ void rea_stream_capture(vdp_context *v, unsigned width, unsigned height, uint64_
 		"\"lengths\":[24,65536,128,%u,65536,8192,%u],\"extra\":%s}",
 		(unsigned long long)session, (unsigned)rea_pid(), (unsigned long long)sequence,
 		v->frame, v->cycles, g->m68k->cycles, width, height,
-		(double)g->master_clock / (MCLKS_LINE * (v->flags2 & FLAG2_REGION_PAL ? 313 : 262)), BORDER_LEFT,
+		(double)g->normal_clock / (MCLKS_LINE * (v->flags2 & FLAG2_REGION_PAL ? 313 : 262)), rea_movie_metadata(), BORDER_LEFT,
 		v->border_top, v->inactive_start,
 		v->regs[REG_MODE_2] & BIT_MODE_5 ? "true":"false",
 		v->regs[REG_MODE_4] & BIT_INTERLACE ? "true":"false",

@@ -14,7 +14,14 @@ Let a human or AI connect observed game behavior to graphics state, memory and e
 
 ## Delivered increment
 
-The implementation in README.md includes immutable inspection copies, not restorable checkpoints. Sprite/A/B/Window pixels are captured from actual compositor inputs and resolved using the live output-slot palette and scene intensity. A captured source/priority map is the sixth panel. VRAM tiles and SAT bounds are separate snapshot diagnostics. A persistent nonblocking TCP stream carries captured pixels and metadata; the server only blits them into one atlas, sent as one WebSocket packet and displayed as one WebGL texture. It performs no end-of-frame layer reconstruction in raster mode. Bounded queues prevent unbounded latency. Graphics target 60 Hz; memory/register text updates at 10 Hz with capture labels. Current direct-raster performance and supported/unsupported paths are documented in README.md.
+The implementation in README.md includes immutable inspection copies and checkpoint-based input movies. Sprite/A/B/Window pixels are captured from actual compositor inputs and resolved using the live output-slot palette and scene intensity. A captured source/priority map is the sixth panel. VRAM tiles and SAT bounds are separate snapshot diagnostics. A persistent nonblocking TCP stream carries captured pixels and metadata; the server only blits them into one atlas, sent as one WebSocket packet and displayed as one WebGL texture. It performs no end-of-frame layer reconstruction in raster mode. Bounded queues prevent unbounded latency. Graphics target 60 Hz; memory/register text updates at 10 Hz with capture labels. Current direct-raster performance and supported/unsupported paths are documented in README.md.
+
+## Delivered: investigation movies and frame comments
+
+- Local checkpoint/input-log recording and replay for standard Genesis cartridges and two controllers; exact ROM/executable checks and per-frame render/memory divergence detection.
+- Browser play/pause, single-frame step, 0.25×–4× speed, movie library, optional keyboard controller and ZIP export.
+- Persistent Markdown comments, validated JSON blocks and offline Mermaid preview, bound to immutable movie/frame/capture identities and hashed lossless render/atlas PNGs plus memory snapshot JSON.
+- Broader determinism validation, rerecording/branching, seeking, reset-event logging and interchange formats remain outside this increment.
 
 ## Delivered: raster-time pixel evidence
 

@@ -4,6 +4,7 @@
  */
 #include "rea.h"
 #include "rea_stream.h"
+#include "rea_movie.h"
 #include "genesis.h"
 #include "util.h"
 #include <stdlib.h>
@@ -65,12 +66,13 @@ void rea_capture(vdp_context *v, unsigned width)
 		long n = setting ? strtol(setting, &end, 10) : (stream_port ? 1 : 2);
 		capture_every = n >= 1 && n <= 60 && (!setting || !*end) ? (unsigned)n : 2;
 	}
-	if (captures_until_next) { captures_until_next--; return; }
+	if (captures_until_next && !getenv("BLASTEM_REA_CONTROL_PORT")) { captures_until_next--; return; }
 	captures_until_next = capture_every - 1;
 	if (!session) session = time(NULL);
 	genesis_context *g = (genesis_context *)v->system;
 	unsigned height = v->output_lines;
 	if (!height || height+v->top_offset > 512 || width > LINEBUF_SIZE) return;
+	rea_movie_capture(v, width);
 	if (stream_port && *stream_port) {
 		rea_stream_capture(v, width, height, ++sequence, session);
 		return;

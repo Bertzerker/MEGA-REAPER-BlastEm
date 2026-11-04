@@ -3,6 +3,7 @@ import {unpack} from './transport.mjs';
 import {AtlasPresenter} from './presenter.mjs';
 import {FramePacer} from './cadence.mjs';
 import {prepare,draw} from './renderer.mjs';
+import {movieUI} from './movie-ui.mjs';
 const $=id=>document.getElementById(id),hex=(n,len=2)=>n.toString(16).toUpperCase().padStart(len,'0');
 const names={composite:'Composite · captured',sprites:'Sprites · captured input',a:'Plane A · captured input',b:'Plane B · captured input',window:'Window · captured input',source:'Source / priority · captured',tiles:'VRAM tiles · snapshot preview'};
 const article=document.createElement('article');article.className='atlas';
@@ -10,8 +11,10 @@ const canvas=document.createElement('canvas');canvas.id='atlas';canvas.setAttrib
 const labels=document.createElement('div');labels.className='atlas-labels';article.append(canvas,labels);$('views').append(article);
 const presenter=new AtlasPresenter(canvas);
 let current,previous,comparison,selectedPixel,frozen=false,refreshHz=60,socket,layoutSignature;
+let movieState={};
 const pacer=new FramePacer();
 let queue=[],buffered=false,lastInfo=0,lastStatus=0,uploadMs=0,presented=0,underruns=0,dropped=0,duplicates=0,sourceHz=60,lastReceivedId;
+let lastMovieSignature,lastMovieFrame;
 const times=[],rafTimes=[];
 function updateLabels(s){
   const signature=JSON.stringify(s.atlas.panels);if(signature===layoutSignature)return;layoutSignature=signature;
@@ -67,6 +70,7 @@ function pause(value){
   frozen=value;queue=[];buffered=false;pacer.reset();times.length=0;
   $('freeze').textContent=frozen?'Resume inspection':'Freeze inspection';
   if(frozen&&current)info();
+  if(frozen&&current)fetch(`/api/snapshot?snapshot=${encodeURIComponent(current.id)}`).catch(()=>{});
   if(socket?.readyState===WebSocket.OPEN)socket.send(JSON.stringify({type:'pause',paused:frozen}));
 }
 const channel=new BroadcastChannel('blastem-rea-inspection');
@@ -97,7 +101,10 @@ function connect(){
     try{
       const next=unpack(event.data);if(!next.atlasPixels)throw Error('Atlas is missing');
       if(next.id===lastReceivedId||next.id===current?.id){duplicates++;return;}
-      lastReceivedId=next.id;sourceHz=next.nominal_hz||60;
+      lastReceivedId=next.id;sourceHz=(next.nominal_hz||60)*(next.movie?.speed||100)/100;
+      const movieSignature=`${next.movie?.id}:${next.movie?.mode}`;
+      if(movieSignature!==lastMovieSignature||next.movie?.frame<lastMovieFrame){queue=[];buffered=false;pacer.reset();}
+      lastMovieSignature=movieSignature;lastMovieFrame=next.movie?.frame;
       queue.push(next);if(queue.length>10){queue.shift();dropped++;}
     }
     catch(error){$('status').textContent=error.message;socket.close();}
@@ -109,7 +116,7 @@ const rate=list=>list.length>1?(list.length-1)*1000/(list.at(-1)-list[0]):0;
 function animate(now){
   rafTimes.push(now);while(rafTimes[0]<now-5000)rafTimes.shift();
   if(!frozen&&pacer.tick(now,sourceHz,refreshHz)){
-    if(!buffered&&queue.length>=6)buffered=true;
+    if(!buffered&&queue.length>=(movieState.paused?1:6))buffered=true;
     if(buffered){
       if(queue.length){
         const next=queue.shift();previous=current;current=next;show(current);times.push(now);presented++;
@@ -127,4 +134,5 @@ function animate(now){
   }
   requestAnimationFrame(animate);
 }
+movieUI({capture:()=>current,freeze:pause,onState:state=>{movieState=state;if(state.paused&&queue.length){previous=current;current=queue.at(-1);queue=[];buffered=false;pacer.reset();if(!frozen){show(current);info();}}}});
 connect();requestAnimationFrame(animate);

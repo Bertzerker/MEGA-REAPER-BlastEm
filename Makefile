@@ -314,7 +314,7 @@ CFLAGS+= -DZSTD_DISABLE_ASM=1
 endif
 endif
 
-COREOBJS:=system.o genesis.o vdp.o rea.o rea_stream.o rea_raster.o io.o romdb.o hash.o xband.o realtec.o i2c.o nor.o kit_prof.o kit_script.o $(M68KOBJS) \
+COREOBJS:=system.o genesis.o vdp.o rea.o rea_stream.o rea_raster.o rea_movie.o io.o romdb.o hash.o xband.o realtec.o i2c.o nor.o kit_prof.o kit_script.o $(M68KOBJS) \
 	sega_mapper.o multi_game.o megawifi.o $(NET) serialize.o $(TERMINAL) $(CONFIGOBJS) gst.o \
 	$(TRANSOBJS) $(AUDIOOBJS) saves.o jcart.o gen_player.o coleco.o pico_pcm.o ymz263b.o \
 	segacd.o lc8951.o cdimage.o cdd_mcu.o cd_graphics.o cdd_fader.o sft_mapper.o mediaplayer.o \

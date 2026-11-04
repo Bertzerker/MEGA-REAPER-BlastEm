@@ -60,6 +60,7 @@ android/local.properties
 /blastem-stream.exe
 /blastem-raster.exe
 /rea/node_modules/
+/rea/public/vendor/
 
 # Local ROMs, save states, credentials and generated diagnostics
 /roms/

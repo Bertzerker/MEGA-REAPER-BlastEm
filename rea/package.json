@@ -1,1 +1,1 @@
-{"name":"mega-reaper-blastem","private":true,"type":"module","scripts":{"start":"node server.mjs","test":"node --test test/*.test.mjs"},"dependencies":{"ws":"^8.22.1"}}
+{"name":"mega-reaper-blastem","private":true,"type":"module","scripts":{"start":"node server.mjs","build:notes":"node build-notes.mjs","test":"node --test test/*.test.mjs"},"dependencies":{"ws":"^8.22.1"},"devDependencies":{"dompurify":"3.4.17","marked":"18.1.3","mermaid":"12.3.0","esbuild":"0.28.2"}}

@@ -31,6 +31,7 @@
 #include "zip.h"
 #include "cdimage.h"
 #include "event_log.h"
+#include "rea_movie.h"
 #ifndef DISABLE_NUKLEAR
 #include "nuklear_ui/blastem_nuklear.h"
 #endif
@@ -317,6 +318,7 @@ static uint32_t opts = 0;
 static uint8_t force_region = 0;
 void init_system_with_media(char *path, system_type force_stype)
 {
+	rea_movie_reset();
 	if (game_system) {
 		if (game_system->persist_save) {
 			game_system->persist_save(game_system);
@@ -732,6 +734,7 @@ int main(int argc, char ** argv)
 		while (current_system->paused) {
 			uint32_t start = render_elapsed_ms();
 			process_events();
+			rea_movie_service();
 			render_update_display();
 			if (current_system->get_vdp) {
 				vdp_context *vdp = current_system->get_vdp(current_system);

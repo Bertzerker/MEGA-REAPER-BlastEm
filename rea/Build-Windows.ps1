@@ -1,5 +1,5 @@
 param(
-    [ValidatePattern('^[0-9]+\.[0-9]+\.[0-9]+$')][string]$Version='0.1.0',
+    [ValidatePattern('^[0-9]+\.[0-9]+\.[0-9]+$')][string]$Version='0.2.0',
     [string]$WslDistribution='Ubuntu',
     [switch]$BuildEmulator,
     [string]$PythonPath
@@ -47,7 +47,8 @@ Copy-Item -LiteralPath (Join-Path $root 'glew\LICENSE.txt') -Destination (Join-P
 Copy-Item -LiteralPath (Join-Path $root 'nuklear_ui\Inter-LICENSE.txt') -Destination (Join-Path $package 'licenses\Inter-LICENSE.txt')
 Copy-Item -LiteralPath (Join-Path $root 'zlib\LICENSE') -Destination (Join-Path $package 'licenses\zlib-LICENSE.txt')
 Copy-Item -LiteralPath (Join-Path $root 'zstd\LICENSE') -Destination (Join-Path $package 'licenses\Zstandard-LICENSE.txt')
-foreach ($file in @('server.mjs','atlas.mjs','protocol.mjs','package.json','package-lock.json','Start-REA.ps1','README.md','SPEC.md')) {
+if (!(Test-Path -LiteralPath (Join-Path $PSScriptRoot 'public/vendor/notes.js'))) { throw 'Run npm ci --prefix rea and npm run build:notes --prefix rea before packaging.' }
+foreach ($file in @('server.mjs','movie.mjs','atlas.mjs','protocol.mjs','package.json','package-lock.json','Start-REA.ps1','README.md','SPEC.md')) {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination (Join-Path $package 'rea')
 }
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'public') -Destination (Join-Path $package 'rea') -Recurse

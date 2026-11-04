@@ -185,7 +185,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE previous,LPWSTR command,int sho
     for(int i=1;i<argc;i++){
         if(!wcscmp(argv[i],L"--headless"))headless=1;
         else if(!wcscmp(argv[i],L"--native-window"))native_window=1;
-        else if(!wcscmp(argv[i],L"--port")&&i+1<argc){int n=_wtoi(argv[++i]);if(n<1||n>65534){LocalFree(argv);return 2;}port=n;}
+        else if(!wcscmp(argv[i],L"--port")&&i+1<argc){int n=_wtoi(argv[++i]);if(n<1||n>65533){LocalFree(argv);return 2;}port=n;}
         else if(!wcscmp(argv[i],L"--duration-ms")&&i+1<argc){int n=_wtoi(argv[++i]);if(n<1||n>3600000){LocalFree(argv);return 2;}duration_ms=n;}
         else if(!wcscmp(argv[i],L"--rom")&&i+1<argc)StringCchCopyW(rom,PATH_CAP,argv[++i]);
         else if(argv[i][0]!=L'-'&&!rom[0])StringCchCopyW(rom,PATH_CAP,argv[i]);
@@ -212,7 +212,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE previous,LPWSTR command,int sho
     if(!size||size>=PATH_CAP||GetFileAttributesW(absolute)==INVALID_FILE_ATTRIBUTES){CloseHandle(mutex);return 2;}
     StringCchCopyW(rom,PATH_CAP,absolute);
     WSADATA ws;if(WSAStartup(MAKEWORD(2,2),&ws)){CloseHandle(mutex);return 1;}
-    if(another_emulator()||!port_free(port)||!port_free(port+1)){
+    if(another_emulator()||!port_free(port)||!port_free(port+1)||!port_free(port+2)){
         if(!headless)MessageBoxW(NULL,L"BlastEm is already running or an inspector port is occupied. Close the existing instance, or use --port NUMBER.",title,MB_ICONINFORMATION);
         WSACleanup();CloseHandle(mutex);return 1;
     }
@@ -225,6 +225,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE previous,LPWSTR command,int sho
     if(!server_log||!emulator_log||input==INVALID_HANDLE_VALUE){if(input==INVALID_HANDLE_VALUE)input=NULL;cleanup();WSACleanup();CloseHandle(mutex);return 1;}
     StringCchPrintfW(value,PATH_CAP,L"%u",port);SetEnvironmentVariableW(L"PORT",value);
     StringCchPrintfW(value,PATH_CAP,L"%u",port+1);SetEnvironmentVariableW(L"BLASTEM_REA_STREAM_PORT",value);
+    StringCchPrintfW(value,PATH_CAP,L"%u",port+2);SetEnvironmentVariableW(L"BLASTEM_REA_CONTROL_PORT",value);
     SetEnvironmentVariableW(L"BLASTEM_REA_CAPTURE_EVERY",L"1");SetEnvironmentVariableW(L"BLASTEM_REA_BROWSER_ONLY",native_window?L"0":L"1");
     path(value,L"rea\\session");SetEnvironmentVariableW(L"BLASTEM_REA_DIR",value);
     StringCchPrintfW(url,128,L"http://127.0.0.1:%u/",port);

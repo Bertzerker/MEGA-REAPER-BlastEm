@@ -2937,6 +2937,7 @@ static void sprite_debug_tms(pixel_t *fb, uint32_t pitch, vdp_context *context)
 {
 }
 
+#include "rea_movie.h"
 void vdp_update_per_frame_debug(vdp_context *context)
 {
 	kit_prof_frame(context);
@@ -3120,6 +3121,7 @@ static void advance_output_line(vdp_context *context)
 			context->pushed_frame = 1;
 			context->fb = NULL;
 		}
+		rea_movie_frame();
 		vdp_update_per_frame_debug(context);
 		context->h40_lines = 0;
 		context->frame++;

@@ -11,6 +11,7 @@
 #include "menu.h"
 #include "bindings.h"
 #include "controller_info.h"
+#include "rea_movie.h"
 #ifndef DISABLE_NUKLEAR
 #include "nuklear_ui/blastem_nuklear.h"
 #endif
@@ -351,16 +352,19 @@ void handle_binding_up(keybinding * binding)
 			}
 			break;
 		case UI_SAVE_STATE:
+			if (rea_movie_active()) break;
 			if (allow_content_binds) {
 				current_system->save_state = QUICK_SAVE_SLOT+1;
 			}
 			break;
 		case UI_LOAD_STATE:
+			if (rea_movie_active()) break;
 			if (allow_content_binds && current_system->load_state) {
 				current_system->load_state(current_system, QUICK_SAVE_SLOT);
 			}
 			break;
 		case UI_NEXT_SPEED:
+			if (rea_movie_active()) break;
 			if (allow_content_binds) {
 				current_speed++;
 				if (current_speed >= num_speeds) {
@@ -372,6 +376,7 @@ void handle_binding_up(keybinding * binding)
 			}
 			break;
 		case UI_PREV_SPEED:
+			if (rea_movie_active()) break;
 			if (allow_content_binds) {
 				current_speed--;
 				if (current_speed < 0) {
@@ -383,6 +388,7 @@ void handle_binding_up(keybinding * binding)
 			}
 			break;
 		case UI_SET_SPEED:
+			if (rea_movie_active()) break;
 			if (allow_content_binds) {
 				if (binding->subtype_b < num_speeds) {
 					current_speed = binding->subtype_b;
@@ -411,11 +417,13 @@ void handle_binding_up(keybinding * binding)
 			render_toggle_fullscreen();
 			break;
 		case UI_SOFT_RESET:
+			if (rea_movie_active()) break;
 			if (allow_content_binds) {
 				current_system->soft_reset(current_system);
 			}
 			break;
 		case UI_RELOAD:
+			if (rea_movie_active()) break;
 			if (allow_content_binds) {
 				reload_media();
 			}

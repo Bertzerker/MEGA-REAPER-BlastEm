@@ -1225,6 +1225,7 @@ static int32_t handle_event(SDL_Event *event)
 	return 0;
 }
 
+#include "rea_movie.h"
 static void drain_events()
 {
 	SDL_Event event;
@@ -1233,6 +1234,7 @@ static void drain_events()
 		handle_event(&event);
 	}
 	ctrl_fifo_poll();
+	rea_movie_poll();
 }
 
 static char *vid_std_names[NUM_VID_STD] = {"ntsc", "pal", "gamegear"};

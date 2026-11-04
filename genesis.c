@@ -2392,8 +2392,10 @@ static void free_genesis(system_header *system)
 	free(gen);
 }
 
+#include "rea_movie.h"
 static void gamepad_down(system_header *system, uint8_t gamepad_num, uint8_t button)
 {
+	if (rea_movie_input(gamepad_num, button, 1)) return;
 	genesis_context *gen = (genesis_context *)system;
 	io_gamepad_down(&gen->io, gamepad_num, button);
 	if (gen->mapper_type == MAPPER_JCART) {
@@ -2403,6 +2405,7 @@ static void gamepad_down(system_header *system, uint8_t gamepad_num, uint8_t but
 
 static void gamepad_up(system_header *system, uint8_t gamepad_num, uint8_t button)
 {
+	if (rea_movie_input(gamepad_num, button, 0)) return;
 	genesis_context *gen = (genesis_context *)system;
 	io_gamepad_up(&gen->io, gamepad_num, button);
 	if (gen->mapper_type == MAPPER_JCART) {
