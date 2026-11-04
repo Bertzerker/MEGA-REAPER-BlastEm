@@ -58,7 +58,9 @@ static void cleanup(void)
 }
 static void fail(const wchar_t *message)
 {
+    if(result)return;
     result=1;
+    if(window)KillTimer(window,1);
     if(!headless)MessageBoxW(window,message,title,MB_ICONERROR|MB_OK);
     else fwprintf(stderr,L"%s\n",message);
     if(window)PostMessageW(window,WM_CLOSE,0,0);
@@ -159,7 +161,12 @@ static LRESULT CALLBACK procedure(HWND hwnd,UINT message,WPARAM w,LPARAM l)
                 SetWindowTextW(status,L"Running. Paste the URL below into the Codex in-app browser.\nClose this launcher or click Stop to end both processes.");
             }else if(GetTickCount()-startup_at>10000)fail(L"The REA server did not start in time. See logs\\server.log.");
         }else if(phase==2){
-            if(!active(&emulator)){PostMessageW(hwnd,WM_CLOSE,0,0);return 0;}
+            if(!active(&emulator)){
+                DWORD code=1;GetExitCodeProcess(emulator.hProcess,&code);
+                if(code)fail(L"BlastEm stopped unexpectedly. See logs\\emulator.log.");
+                else PostMessageW(hwnd,WM_CLOSE,0,0);
+                return 0;
+            }
             if(duration_ms&&GetTickCount()-running_at>=duration_ms)PostMessageW(hwnd,WM_CLOSE,0,0);
         }
         return 0;
