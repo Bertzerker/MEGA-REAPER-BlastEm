@@ -1,0 +1,174 @@
+// Local, read-only snapshot API and bounded atlas stream. GPL-3.0-or-later.
+import http from 'node:http';
+import net from 'node:net';
+import {WebSocketServer,WebSocket} from 'ws';
+import {readFile, mkdir, stat} from 'node:fs/promises';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {decode, inspect, sprites} from './public/decoder.mjs';
+import {fields} from './public/transport.mjs';
+import {pack,unpack,jsonSnapshot,FrameReader} from './protocol.mjs';
+import {AtlasRenderer} from './atlas.mjs';
+import {AtlasEncoder} from './public/rle.mjs';
+const here = path.dirname(fileURLToPath(import.meta.url));
+export function createServer(dir) {
+  const history = new Map();
+  const pinned = new Map();
+  let cached, stamp, loading, live;
+  let streamed,producer,streamListener;
+  // Fixed-cost pixel runs avoid general-purpose compression worker backlogs
+  // on dense scenes. Incompressible atlases use the raw packet format.
+  const atlas=new AtlasRenderer(),atlasEncoder=new AtlasEncoder(),wss=new WebSocketServer({noServer:true,maxPayload:16384,perMessageDeflate:false});
+  const counters={ingested:0,atlases:0,client_skips:0,native_gaps:0,received_bytes:0,pipeline_max_ms:0,clients:[]};
+  const pipelineTimes=[];
+  let previousProducer,previousFrame;
+  const decoded=s=>typeof s.ram==='string'?decode(s):s;
+  const rawJSON=s=>typeof s.ram==='string'?s:jsonSnapshot(s);
+  function ingest(packet){
+    const started=performance.now();
+    const s=unpack(packet);
+    if(s.schema!==1||!Number.isInteger(s.width)||s.width<1||s.width>347||!Number.isInteger(s.height)||s.height<1||s.height>512
+      ||s.regs.length!==24||s.vram.length!==65536||s.cram.length!==128||s.ram.length!==65536||s.zram.length!==8192
+      ||![80,128].includes(s.vsram.length)||s.rgb.length!==s.width*s.height*3)throw Error('Invalid native snapshot');
+    if(s.raster&&(s.raster.width!==s.width||s.raster.height!==s.height||JSON.stringify(s.raster.layers)!==JSON.stringify(['sprites','a','b','window','source'])))throw Error('Invalid raster layout');
+    if(s.raster?.valid&&(s.raster_rgba?.length!==s.width*s.height*20||s.raster_samples?.length!==s.width*s.height*4||s.raster_flags?.length!==s.width*s.height))throw Error('Invalid captured raster lengths');
+    const producerId=s.id.slice(0,s.id.lastIndexOf('-'));
+    if(producerId===previousProducer&&s.frame>previousFrame)counters.native_gaps+=s.frame-previousFrame-1;
+    previousProducer=producerId;previousFrame=s.frame;counters.received_bytes+=packet.byteLength;
+    streamed=s;live=packet;history.set(s.id,s);if(history.size>16)history.delete(history.keys().next().value);
+    counters.ingested++;counters.frame=s.frame;counters.last_received=Date.now();
+    if(Array.from(wss.clients).some(c=>!c.paused)){
+      const image=atlas.render(s),combined=pack(image,{omitRasterRGBA:true,atlasEncoder});counters.atlases++;counters.atlas_render_ms=image.atlas.render_ms;counters.last_packet_bytes=combined.byteLength;
+      for(const client of wss.clients){
+        if(client.readyState!==WebSocket.OPEN||client.paused)continue;
+        sendAtlas(client,combined);
+      }
+    }
+    const elapsed=performance.now()-started;
+    counters.pipeline_max_ms=Math.max(counters.pipeline_max_ms,elapsed);
+    pipelineTimes.push(elapsed);if(pipelineTimes.length>300)pipelineTimes.shift();
+  }
+  function sendAtlas(client,packet){
+    // Count completed messages rather than comparing byte sizes: headers vary
+    // slightly, and an audio-paced producer can deliver several frames in a
+    // burst. At most six complete frames may be compressing/writing, covering
+    // a short worker scheduling pause without dropping a real capture.
+    if((client.pendingFrames||0)>=6){counters.client_skips++;return;}
+    client.pendingFrames=(client.pendingFrames||0)+1;
+    client.send(packet,{binary:true,compress:false},()=>{client.pendingFrames--;});
+  }
+  async function load() {
+    if(streamed)return streamed;
+    if(loading)return loading;
+    loading=refresh();
+    try{return await loading;}finally{loading=null;}
+  }
+  async function refresh() {
+    let raw;
+    let nextStamp;
+    try {
+      const file=path.join(dir,'snapshot.json'), info=await stat(file,{bigint:true});
+      nextStamp=`${info.mtimeNs}:${info.ctimeNs}:${info.ino}:${info.size}`;
+      if(cached && stamp===nextStamp)return cached;
+      raw = JSON.parse(await readFile(file,'utf8'));
+    }
+    catch { throw Object.assign(Error('Waiting for emulator snapshot'),{status:503}); }
+    if (raw.schema !== 1 || typeof raw.id !== 'string') throw Error('Unsupported snapshot');
+    if (!history.has(raw.id)) {
+      history.set(raw.id, raw);
+      if (history.size > 16) history.delete(history.keys().next().value);
+    }
+    cached=raw;stamp=nextStamp;live=null;
+    return raw;
+  }
+  const server=http.createServer(async (req,res) => {
+    const send = (status,data) => {res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(data));};
+    try {
+      // Prevent arbitrary Host headers/DNS rebinding. Server binds loopback only.
+      if (!/^127\.0\.0\.1:\d+$/.test(req.headers.host || '')) return send(403,{error:'Use 127.0.0.1'});
+      if (req.method !== 'GET') return send(405,{error:'Read-only API'});
+      const u = new URL(req.url,'http://127.0.0.1');
+      if (u.pathname.startsWith('/api/')) {
+        if(u.pathname==='/api/metrics'){
+          const sorted=[...pipelineTimes].sort((a,b)=>a-b);
+          return send(200,{...counters,pipeline_p95_ms:sorted[Math.floor(sorted.length*.95)]||0,clients:Array.from(wss.clients,c=>({...c.metrics,pending_frames:c.pendingFrames||0,transport:'rgba-rle/raw'}))});
+        }
+        const latest = await load();
+        if(u.pathname === '/api/live') {
+          const etag=`"${latest.id}"`;
+          if(req.headers['if-none-match']===etag){res.writeHead(304,{'ETag':etag,'Cache-Control':'no-cache'});return res.end();}
+          if(!live){
+            const metadata={...latest},parts=[];
+            for(const field of fields){parts.push(Buffer.from(metadata[field],'hex'));delete metadata[field];}
+            const header=Buffer.from(JSON.stringify({metadata,lengths:parts.map(p=>p.length)}));
+            const size=Buffer.alloc(4);size.writeUInt32LE(header.length);
+            live=Buffer.concat([size,header,...parts]);
+          }
+          res.writeHead(200,{'Content-Type':'application/octet-stream','ETag':etag,'Cache-Control':'no-cache','Content-Length':live.length});
+          return res.end(live);
+        }
+        if (u.pathname === '/api/history') return send(200,Array.from(history.values(),s=>({id:s.id,frame:s.frame})));
+        const id = u.searchParams.get('snapshot');
+        const raw = id ? history.get(id)||pinned.get(id) : latest;
+        if (!raw) return send(404,{error:'Snapshot expired or unknown'});
+        if (u.pathname === '/api/snapshot') {
+          pinned.delete(raw.id);pinned.set(raw.id,raw);if(pinned.size>16)pinned.delete(pinned.keys().next().value);
+          return send(200,rawJSON(raw));
+        }
+        const s = decoded(raw);
+        if (u.pathname === '/api/sprites') {
+          if (!s.mode5 || s.interlace) throw Error('Decoder supports non-interlaced Mode 5 only');
+          return send(200,{snapshot:s.id,sprites:sprites(s),evidence:'SAT reconstruction; no gameplay objects'});
+        }
+        if (u.pathname === '/api/pixel') return send(200,inspect(s,u.searchParams.get('view'),Number(u.searchParams.get('x')),Number(u.searchParams.get('y'))));
+        if (['/api/memory','/api/diff'].includes(u.pathname)) {
+          const space = u.searchParams.get('space') || 'ram';
+          if (!['ram','zram','vram','cram','vsram','regs'].includes(space)) throw Error('Unknown address space');
+          const start = Number(u.searchParams.get('start') || 0), length = Number(u.searchParams.get('length') || 256);
+          if (!Number.isInteger(start)||!Number.isInteger(length)||start<0||length<1||length>4096||start+length>s[space].length) throw Error('Invalid range (maximum 4096 bytes)');
+          if (u.pathname === '/api/memory') return send(200,{snapshot:s.id,space,start,base:space==='ram'?0xff0000:0,bytes:Array.from(s[space].slice(start,start+length))});
+          const prior = history.get(u.searchParams.get('from'))||pinned.get(u.searchParams.get('from'));
+          if (!prior) return send(404,{error:'Comparison snapshot expired or unknown'});
+          const b = decoded(prior)[space], changes=[];
+          for (let i=start;i<start+length;i++) if (b[i]!==s[space][i]) changes.push({offset:i,before:b[i],after:s[space][i]});
+          return send(200,{from:prior.id,to:s.id,space,changes});
+        }
+        return send(404,{error:'Unknown endpoint'});
+      }
+      const files = {'/':'index.html','/app.mjs':'app.mjs','/decoder.mjs':'decoder.mjs','/renderer.mjs':'renderer.mjs','/transport.mjs':'transport.mjs','/presenter.mjs':'presenter.mjs','/cadence.mjs':'cadence.mjs','/rle.mjs':'rle.mjs','/style.css':'style.css'};
+      const file = files[u.pathname];
+      if (!file) return send(404,{error:'Not found'});
+      res.writeHead(200,{'Content-Type':file.endsWith('.html')?'text/html':file.endsWith('.css')?'text/css':'text/javascript',
+        'Cache-Control':'no-store','Content-Security-Policy':`default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self' ws://${req.headers.host}; object-src 'none'; frame-ancestors 'none'`});
+      res.end(await readFile(path.join(here,'public',file)));
+    } catch(e) { send(e.status || 400,{error:e.message}); }
+  });
+  server.on('upgrade',(req,socket,head)=>{
+    if(req.url!=='/stream'||!/^127\.0\.0\.1:\d+$/.test(req.headers.host||'')||req.headers.origin!==`http://${req.headers.host}`){socket.end('HTTP/1.1 403 Forbidden\r\n\r\n');return;}
+    wss.handleUpgrade(req,socket,head,ws=>{
+      ws.on('error',()=>{});
+      ws.on('message',message=>{try{const m=JSON.parse(message);if(m.type==='metrics')ws.metrics={...m,received:Date.now()};if(m.type==='pause')ws.paused=!!m.paused;}catch{}});
+      if(streamed)sendAtlas(ws,pack(atlas.render(streamed),{omitRasterRGBA:true,atlasEncoder}));
+    });
+  });
+  server.listenStream=port=>new Promise((resolve,reject)=>{
+    streamListener=net.createServer(socket=>{
+      if(producer){socket.destroy();return;}
+      producer=socket;socket.setNoDelay(true);
+      const reader=new FrameReader(ingest);
+      socket.on('data',chunk=>{try{reader.push(chunk);}catch(error){console.error('REA stream:',error.message);socket.destroy();}});
+      socket.on('error',()=>{});socket.on('close',()=>{if(producer===socket)producer=null;});
+    });
+    streamListener.once('error',reject);streamListener.listen(port,'127.0.0.1',()=>resolve(streamListener.address()));
+  });
+  server.on('close',()=>{for(const ws of wss.clients)ws.terminate();wss.close();producer?.destroy();streamListener?.close();});
+  return server;
+}
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const dir = path.resolve(process.env.BLASTEM_REA_DIR || process.argv[2] || path.join(here,'session'));
+  await mkdir(dir,{recursive:true});
+  const port = Number(process.env.PORT || 8765);
+  const server=createServer(dir),streamPort=Number(process.env.BLASTEM_REA_STREAM_PORT||port+1);
+  await server.listenStream(streamPort);
+  server.listen(port,'127.0.0.1',()=>console.log(`REA: http://127.0.0.1:${port}\nNative binary stream: 127.0.0.1:${streamPort}\nCapture directory (legacy fallback): ${dir}`));
+}

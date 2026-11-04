@@ -13,6 +13,8 @@
 #include "terminal.h"
 #include "kit_prof.h"
 #include "kit_script.h"
+#include "rea.h"
+#include "rea_raster.h"
 #ifndef DISABLE_NUKLEAR
 #include "nuklear_ui/debug_ui.h"
 #endif
@@ -450,6 +452,7 @@ static void write_cram(vdp_context * context, uint16_t address, uint16_t value)
 		if (context->hslot < bg_end_slot) {
 			pixel_t color = (context->regs[REG_MODE_2] & BIT_MODE_5) ? context->colors[addr] : context->colors[addr + MODE4_OFFSET];
 			context->output[(context->hslot - BG_START_SLOT)*2 + 1] = color;
+			rea_raster_dot(context, (context->hslot - BG_START_SLOT)*2 + 1);
 		}
 	}
 }
@@ -533,6 +536,8 @@ vdp_context *init_vdp_context(uint8_t region_pal, uint8_t has_max_vsram, uint8_t
 		context->fb = render_get_framebuffer(FRAMEBUFFER_ODD, &context->output_pitch);
 	}
 	context->output = (pixel_t *)(((char *)context->fb) + context->output_pitch * context->border_top);
+	rea_raster_init(context);
+	rea_raster_line(context, context->border_top);
 #if !defined(_WIN32) && !defined(IS_LIB)
 	if (ret->renderer) {
 		event_log_mem();
@@ -544,6 +549,7 @@ vdp_context *init_vdp_context(uint8_t region_pal, uint8_t has_max_vsram, uint8_t
 
 void vdp_free(vdp_context *context)
 {
+	free(context->rea_raster);
 	if (headless) {
 		free(context->fb);
 	}
@@ -1589,6 +1595,7 @@ static void fetch_map_mode4(uint16_t col, uint32_t line, vdp_context *context)
 
 static uint8_t composite_normal(vdp_context *context, uint8_t *debug_dst, uint8_t sprite, uint8_t plane_a, uint8_t plane_b, uint8_t bg_index)
 {
+	if (context->rea_raster) rea_raster_inputs(context, debug_dst - context->layer_debug_buf, sprite, plane_a, plane_b);
 	uint8_t pixel = bg_index;
 	uint8_t src = DBG_SRC_BG;
 	if (plane_b & 0xF) {
@@ -1612,6 +1619,7 @@ typedef struct {
 
 static sh_pixel composite_highlight(vdp_context *context, uint8_t *debug_dst, uint8_t sprite, uint8_t plane_a, uint8_t plane_b, uint8_t bg_index)
 {
+	if (context->rea_raster) rea_raster_inputs(context, debug_dst - context->layer_debug_buf, sprite, plane_a, plane_b);
 	uint8_t pixel = bg_index;
 	uint8_t src = DBG_SRC_BG;
 	uint8_t intensity = 0;
@@ -1908,6 +1916,7 @@ static void render_testreg_highlight(vdp_context *context, int32_t col, uint8_t 
 
 static void render_map_output(uint32_t line, int32_t col, vdp_context * context)
 {
+	if (!col && context->rea_raster) memset(context->rea_raster->inputs, 0, sizeof(context->rea_raster->inputs));
 	uint8_t *dst;
 	uint8_t *debug_dst;
 	uint8_t output_disabled = (context->test_regs[0] & TEST_BIT_DISABLE) != 0;
@@ -3100,6 +3109,8 @@ static void advance_output_line(vdp_context *context)
 	if (context->output_lines >= lines_max || (!context->pushed_frame && output_line == context->inactive_start + context->border_top)) {
 		//we've either filled up a full frame or we're at the bottom of screen in the current defined mode + border crop
 		if (!headless) {
+			rea_capture(context, context->h40_lines > (context->inactive_start + context->border_top) / 2 ? LINEBUF_SIZE : (256+HORIZ_BORDER));
+			rea_raster_clear(context);
 			render_framebuffer_updated(context->cur_buffer, context->h40_lines > (context->inactive_start + context->border_top) / 2 ? LINEBUF_SIZE : (256+HORIZ_BORDER));
 			uint8_t is_even = context->flags2 & FLAG2_EVEN_FIELD;
 			if (context->vcounter <= context->inactive_start && (context->regs[REG_MODE_4] & BIT_INTERLACE)) {
@@ -3136,6 +3147,7 @@ static void advance_output_line(vdp_context *context)
 		output_line = context->output_lines++;//context->vcounter - (0x200 - context->border_top);
 	} else {
 		context->output = NULL;
+		rea_raster_line(context, -1);
 		return;
 	}
 	if (!context->fb) {
@@ -3143,6 +3155,7 @@ static void advance_output_line(vdp_context *context)
 	}
 	output_line += context->top_offset;
 	context->output = (pixel_t *)(((char *)context->fb) + context->output_pitch * output_line);
+	rea_raster_line(context, output_line);
 #ifdef DEBUG_FB_FILL
 	for (int i = 0; i < LINEBUF_SIZE; i++)
 	{
@@ -3237,6 +3250,7 @@ static void draw_right_border(vdp_context *context)
 #define CHECK_ONLY if (context->cycles >= target_cycles) { return; }
 #define CHECK_LIMIT if (context->flags & FLAG_DMA_RUN) { run_dma_src(context, -1); } context->hslot++; context->cycles += slot_cycles; CHECK_ONLY
 #define OUTPUT_PIXEL(slot) if ((slot) >= BG_START_SLOT) {\
+		if (context->rea_raster) rea_raster_emit(context, ((slot) - BG_START_SLOT) * 2, 2, 1);\
 		uint8_t *src = context->compositebuf + ((slot) - BG_START_SLOT) *2;\
 		pixel_t *dst = context->output + ((slot) - BG_START_SLOT) *2;\
 		if ((*src & 0x3F) | test_layer) {\
@@ -3252,6 +3266,7 @@ static void draw_right_border(vdp_context *context)
 	}
 
 #define OUTPUT_PIXEL_H40(slot) if (slot <= (BG_START_SLOT + LINEBUF_SIZE/2)) {\
+		if (context->rea_raster) rea_raster_emit(context, (slot - BG_START_SLOT) * 2, slot == (BG_START_SLOT + LINEBUF_SIZE/2) ? 1 : 2, 1);\
 		uint8_t *src = context->compositebuf + (slot - BG_START_SLOT) *2;\
 		pixel_t *dst = context->output + (slot - BG_START_SLOT) *2;\
 		if ((*src & 0x3F) | test_layer) {\
@@ -3271,6 +3286,7 @@ static void draw_right_border(vdp_context *context)
 	}
 
 #define OUTPUT_PIXEL_H32(slot) if (slot <= (BG_START_SLOT + (256+HORIZ_BORDER)/2)) {\
+		if (context->rea_raster) rea_raster_emit(context, (slot - BG_START_SLOT) * 2, slot == (BG_START_SLOT + (256+HORIZ_BORDER)/2) ? 1 : 2, 1);\
 		uint8_t *src = context->compositebuf + (slot - BG_START_SLOT) *2;\
 		pixel_t *dst = context->output + (slot - BG_START_SLOT) *2;\
 		if ((*src & 0x3F) | test_layer) {\
@@ -3650,6 +3666,7 @@ static void vdp_h40_line(vdp_context * context)
 	uint8_t *src = context->compositebuf + (LINE_CHANGE_H40 - BG_START_SLOT) *2;
 	pixel_t *dst = context->output + (LINE_CHANGE_H40 - BG_START_SLOT) *2;
 	if (context->output) {
+		if (context->rea_raster) rea_raster_emit(context, (LINE_CHANGE_H40 - BG_START_SLOT) * 2, LINEBUF_SIZE - (LINE_CHANGE_H40 - BG_START_SLOT) * 2, 1);
 		if (test_layer) {
 			for (int i = 0; i < LINEBUF_SIZE - (LINE_CHANGE_H40 - BG_START_SLOT) * 2; i++)
 			{
@@ -3794,6 +3811,7 @@ static void vdp_h40_line(vdp_context * context)
 		return;
 	}
 	dst = context->output;
+	if (context->rea_raster) rea_raster_emit(context, 0, (LINE_CHANGE_H40 - BG_START_SLOT) * 2, 1);
 	if (test_layer) {
 		for (int i = 0; i < (LINE_CHANGE_H40 - BG_START_SLOT) * 2; i++)
 		{
@@ -5505,6 +5523,7 @@ static void vdp_inactive(vdp_context *context, uint32_t target_cycles, uint8_t i
 		}
 
 		if (dst) {
+			if (context->rea_raster && mode_5) rea_raster_emit(context, dst - context->output, 1, context->done_composite != NULL);
 			uint8_t bg_index;
 			pixel_t bg_color;
 			if (mode_5) {
@@ -5532,6 +5551,7 @@ static void vdp_inactive(vdp_context *context, uint32_t target_cycles, uint8_t i
 				*(debug_dst++) = DBG_SRC_BG;
 			}
 			if (context->hslot != bg_end_slot) {
+				if (context->rea_raster && mode_5) rea_raster_emit(context, dst - context->output, 1, context->done_composite != NULL);
 				if (context->done_composite) {
 					uint8_t pixel = context->compositebuf[dst-context->output];
 					if (!(pixel & 0x3F | test_layer)) {
@@ -6603,6 +6623,7 @@ void vdp_serialize(vdp_context *context, serialize_buffer *buf)
 void vdp_deserialize(deserialize_buffer *buf, void *vcontext)
 {
 	vdp_context *context = vcontext;
+	rea_raster_clear(context);
 	uint8_t version = load_int8(buf);
 	uint8_t vramk;
 	if (version == 64) {

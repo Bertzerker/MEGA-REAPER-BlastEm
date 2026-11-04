@@ -83,6 +83,8 @@ static int main_width, main_height, windowed_width, windowed_height;
 
 static uint8_t render_gl = 1;
 static uint8_t scanlines, is_fullscreen, force_cursor;
+static uint8_t rea_browser_only;
+static ui_render_fun frame_presented;
 
 static uint32_t last_frame = 0;
 
@@ -975,6 +977,7 @@ static uint8_t main_is_relative;
 static uint8_t main_has_focus;
 void render_relative_mouse(uint8_t enabled)
 {
+	if (rea_browser_only) enabled = 0;
 	main_is_relative = enabled;
 	if (main_has_focus) {
 		SDL_SetRelativeMouseMode(enabled);
@@ -1337,13 +1340,15 @@ static void window_setup(void)
 	// frame buffer, so they never need to see it. SDL_MAC_BACKGROUND_APP alone only
 	// keeps the focus: the window still opens above the other apps' windows.
 	const char *hidden = getenv("BLASTEM_HIDDEN_WINDOW");
-	if (hidden && *hidden && strcmp(hidden, "0")) {
+	if (rea_browser_only || (hidden && *hidden && strcmp(hidden, "0"))) {
 		flags |= SDL_WINDOW_HIDDEN;
 	}
 	update_cursor();
 
 	tern_val def = {.ptrval = "audio"};
-	if (external_sync) {
+	if (rea_browser_only) {
+		sync_src = SYNC_AUDIO;
+	} else if (external_sync) {
 		sync_src = SYNC_EXTERNAL;
 	} else {
 		char *sync_src_str = tern_find_path_default(config, "system\0sync_source\0", def, TVAL_PTR).ptrval;
@@ -1373,6 +1378,7 @@ static void window_setup(void)
 	} else {
 		vsync = "on";
 	}
+	if (rea_browser_only) vsync = "off";
 	vsync_enabled = strcmp(vsync, "off");
 
 	tern_node *video = tern_find_node(config, "video");
@@ -1405,7 +1411,7 @@ static void window_setup(void)
 
 #ifndef DISABLE_OPENGL
 	char *gl_enabled_str = tern_find_path_default(config, "video\0gl\0", def, TVAL_PTR).ptrval;
-	uint8_t gl_enabled = strcmp(gl_enabled_str, "off") != 0;
+	uint8_t gl_enabled = !rea_browser_only && strcmp(gl_enabled_str, "off") != 0;
 	if (gl_enabled)
 	{
 		flags |= SDL_WINDOW_OPENGL;
@@ -1452,7 +1458,7 @@ static void window_setup(void)
 	}
 	if (!render_gl) {
 #endif
-		flags = SDL_RENDERER_ACCELERATED;
+		flags = rea_browser_only ? SDL_RENDERER_SOFTWARE : SDL_RENDERER_ACCELERATED;
 		if (!strcmp("on", vsync) || !strcmp("tear", vsync)) {
 			flags |= SDL_RENDERER_PRESENTVSYNC;
 		}
@@ -1487,6 +1493,10 @@ static void window_setup(void)
 
 void render_init(int width, int height, char * title, uint8_t fullscreen)
 {
+	const char *rea_mode = getenv("BLASTEM_REA_BROWSER_ONLY");
+	const char *rea_port = getenv("BLASTEM_REA_STREAM_PORT");
+	rea_browser_only = rea_port && *rea_port && rea_mode && *rea_mode && strcmp(rea_mode,"0");
+	if (rea_browser_only) { fullscreen = 0; force_cursor = 1; }
 #ifdef SDL_HINT_WINDOWS_DPI_SCALING
 	//In some ways, the other DPI scaling option for SDL2 on Windows is better for BlastEm's needs,
 	//but setting this makes it more consistent with how high DPI support works on other platforms
@@ -2194,6 +2204,10 @@ pixel_t *locked_pixels;
 uint32_t locked_pitch;
 pixel_t *render_get_framebuffer(uint8_t which, int *pitch)
 {
+	if (rea_browser_only && which <= FRAMEBUFFER_EVEN) {
+		*pitch = PITCH_BYTES(LINEBUF_SIZE);
+		return texture_buf;
+	}
 	if (sync_src == SYNC_AUDIO_THREAD || sync_src == SYNC_EXTERNAL) {
 		*pitch = PITCH_BYTES(LINEBUF_SIZE);
 		pixel_t *buffer;
@@ -2536,6 +2550,19 @@ int frame_queue_len, frame_queue_read, frame_queue_write;
 
 void render_framebuffer_updated(uint8_t which, int width)
 {
+	if (rea_browser_only && which <= FRAMEBUFFER_EVEN) {
+		/* The VDP and REA have already consumed this real CPU framebuffer.
+		 * No second texture upload, swap chain, GPU context or native present
+		 * is needed when the browser is the display. Keep host event/control
+		 * processing active; audio still paces normal emulation. */
+		last_width = width;
+		last_height = (video_standard == VID_PAL ? 294 : 243) - overscan_top[video_standard] - overscan_bot[video_standard];
+		last_frame = SDL_GetTicks();
+		if (!events_processed) process_events();
+		events_processed = 0;
+		if (frame_presented) frame_presented();
+		return;
+	}
 	if (which < FRAMEBUFFER_USER_START && (sync_src == SYNC_AUDIO_THREAD || sync_src == SYNC_EXTERNAL)) {
 		SDL_LockMutex(frame_mutex);
 			while (frame_queue_len == 4) {
@@ -2627,7 +2654,6 @@ void render_set_ui_render_fun(uint8_t which, ui_render_fun fun)
 	}
 }
 
-static ui_render_fun frame_presented;
 void render_set_frame_presented_fun(ui_render_fun fun)
 {
 	frame_presented = fun;
@@ -2877,6 +2903,7 @@ void process_events()
 #define TOGGLE_MIN_DELAY 250
 void render_toggle_fullscreen()
 {
+	if (rea_browser_only) return;
 	//protect against event processing causing us to attempt to toggle while still toggling
 	if (in_toggle) {
 		return;

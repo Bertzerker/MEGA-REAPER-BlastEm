@@ -1,6 +1,7 @@
 #disable built-in rules
 .SUFFIXES :
 .PHONY: all clean
+PYTHON ?= python3
 
 ifndef OS
 OS:=$(shell uname -s)
@@ -313,7 +314,7 @@ CFLAGS+= -DZSTD_DISABLE_ASM=1
 endif
 endif
 
-COREOBJS:=system.o genesis.o vdp.o io.o romdb.o hash.o xband.o realtec.o i2c.o nor.o kit_prof.o kit_script.o $(M68KOBJS) \
+COREOBJS:=system.o genesis.o vdp.o rea.o rea_stream.o rea_raster.o io.o romdb.o hash.o xband.o realtec.o i2c.o nor.o kit_prof.o kit_script.o $(M68KOBJS) \
 	sega_mapper.o multi_game.o megawifi.o $(NET) serialize.o $(TERMINAL) $(CONFIGOBJS) gst.o \
 	$(TRANSOBJS) $(AUDIOOBJS) saves.o jcart.o gen_player.o coleco.o pico_pcm.o ymz263b.o \
 	segacd.o lc8951.o cdimage.o cdd_mcu.o cd_graphics.o cdd_fader.o sft_mapper.o mediaplayer.o \
@@ -483,11 +484,11 @@ chdtool$(EXE) : $(OBJDIR)/chdtool.o $(OBJDIR)/chd.o $(OBJDIR)/util.o $(OBJDIR)/t
 
 # embed the UI font: generate a C byte array from the .ttf
 nuklear_ui/inter_medium.c : nuklear_ui/Inter-Medium.ttf bin2c.py
-	./bin2c.py $< inter_medium_ttf $@
+	$(PYTHON) bin2c.py $< inter_medium_ttf $@
 
 .PRECIOUS: %.c
 %.c %.h : %.cpu cpu_dsl.py
-	./cpu_dsl.py -d $(shell echo $@ | sed -E -e "s/^z80.*$$/$(Z80_DISPATCH)/" -e '/^goto/! s/^.*$$/call/') $< > $(shell echo $@ | sed -E 's/\.[ch]$$/./')c
+	$(PYTHON) cpu_dsl.py -d $(shell echo $@ | sed -E -e "s/^z80.*$$/$(Z80_DISPATCH)/" -e '/^goto/! s/^.*$$/call/') $< > $(shell echo $@ | sed -E 's/\.[ch]$$/./')c
 
 %.db.c : %.db
 	sed $< -e 's/"/\\"/g' -e 's/^\(.*\)$$/"\1\\n"/' -e'1s/^\(.*\)$$/const char $(shell echo $< | tr '.' '_')_data[] = \1/' -e '$$s/^\(.*\)$$/\1;/' > $@
@@ -514,7 +515,7 @@ $(LIBOBJDIR)/%.o : %.m | $(LIBORDERONLY)
 	convert -background none -flatten $< $@
 
 %.tiles : %.spec
-	./img2tiles.py -s $< $@
+	$(PYTHON) img2tiles.py -s $< $@
 
 %.bin : %.s68
 	vasmm68k_mot -Fbin -m68000 -no-opt -spaces -o $@ -L $@.list $<

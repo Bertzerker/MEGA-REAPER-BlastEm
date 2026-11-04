@@ -184,6 +184,7 @@ typedef void (*vdp_reg_hook)(vdp_context *, uint16_t reg, uint16_t value);
 typedef void (*vdp_data_hook)(vdp_context *, uint16_t value);
 
 struct vdp_context {
+	struct rea_raster *rea_raster;
 	system_header  *system;
 	struct vdp_context *renderer;
 	//pointer to current line in framebuffer

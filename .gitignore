@@ -47,6 +47,36 @@ android/local.properties
 
 # Local notes / docs (kept locally, not tracked — see ../blastem for PATCHES.md etc.)
 *.md
+!/README.md
+!/rea/README.md
+!/rea/SPEC.md
+/rea/session/
+/rea/test-output/
+/rea/build-*.log
+/rea/deps/
+/rea/dist/
+/SDL2.dll
+/blastem-rea.exe
+/blastem-stream.exe
+/blastem-raster.exe
+/rea/node_modules/
+
+# Local ROMs, save states, credentials and generated diagnostics
+/roms/
+*.bin
+*.rom
+*.gen
+*.smd
+*.sms
+*.gg
+*.32x
+*.iso
+*.chd
+*.gst
+*.state
+*.sav
+.env
+.env.*
 
 # macOS
 .DS_Store
