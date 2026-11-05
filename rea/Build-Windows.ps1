@@ -1,5 +1,5 @@
 param(
-    [ValidatePattern('^[0-9]+\.[0-9]+\.[0-9]+$')][string]$Version='0.3.0',
+    [ValidatePattern('^[0-9]+\.[0-9]+\.[0-9]+$')][string]$Version='0.4.0',
     [string]$WslDistribution='Ubuntu',
     [switch]$BuildEmulator,
     [string]$PythonPath
@@ -39,6 +39,11 @@ foreach ($file in @('blastem-raster.exe','SDL2.dll','default.cfg','rom.db','syst
 }
 Copy-Item -LiteralPath (Join-Path $root 'README') -Destination (Join-Path $package 'UPSTREAM-README.txt')
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'windows\README.txt') -Destination (Join-Path $package 'README.txt')
+$featureCrops=Join-Path $package 'docs\rea-features'
+New-Item -ItemType Directory -Path $featureCrops | Out-Null
+foreach ($file in @('graphics.jpg','inspection.jpg','movies.jpg','catalog.jpg')) {
+    Copy-Item -LiteralPath (Join-Path $root "docs\rea-features\$file") -Destination $featureCrops
+}
 foreach ($directory in @('images','shaders')) { Copy-Item -LiteralPath (Join-Path $root $directory) -Destination $package -Recurse }
 Copy-Item -LiteralPath (Join-Path $nodeRoot 'node.exe') -Destination (Join-Path $package 'runtime')
 Copy-Item -LiteralPath (Join-Path $nodeRoot 'LICENSE') -Destination (Join-Path $package 'licenses\Node.js-LICENSE.txt')

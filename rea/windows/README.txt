@@ -53,6 +53,13 @@ ZIP export includes the checkpoint, inputs, comments, PNGs and snapshot JSON.
 Movies and comments persist locally in rea\session\; no ROM is exported.
 Offline preview libraries and their license notices are in rea\public\vendor\.
 
+Sprite & tile catalog:
+Pick a sprite or plane pixel and choose "Add to catalog" to name a match or
+append an animation variant. Show all matches or follow one captured instance.
+"Attach to comment" saves the original capture and catalog revision during live
+play or replay. Comments and movie exports include the saved isolation image
+and catalog definition. See README.md for the illustrated guide.
+
 Project attribution:
 BlastEm was created by Mike Pavone, with contributions from the BlastEm community.
 Original project: https://www.retrodev.com/blastem/
