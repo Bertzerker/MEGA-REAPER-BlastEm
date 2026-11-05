@@ -1,15 +1,50 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import net from 'node:net';
+import {spawn} from 'node:child_process';
 import {WebSocket} from 'ws';
 import {once} from 'node:events';
-import {mkdtemp,rm} from 'node:fs/promises';
+import {mkdtemp,rm,symlink} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
+import {fileURLToPath} from 'node:url';
 import {pack,unpack,FrameReader} from '../protocol.mjs';
 import {AtlasRenderer} from '../atlas.mjs';
 import {createServer} from '../server.mjs';
 import {palette,planePixel,spritePixel,sprites,tilePixel} from '../public/decoder.mjs';
+test('standalone REA starts through a directory alias', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'rea-alias-'));
+  const alias = path.join(root, 'launcher path Ω');
+  const source = fileURLToPath(new URL('../', import.meta.url));
+  let child, timer;
+  try {
+    await symlink(source, alias, process.platform === 'win32' ? 'junction' : 'dir');
+    child = spawn(process.execPath, [path.join(alias, 'server.mjs')], {
+      env: {...process.env, PORT: '0', BLASTEM_REA_STREAM_PORT: '0', BLASTEM_REA_DIR: path.join(root, 'session')},
+      stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
+    });
+    await new Promise((resolve, reject) => {
+      let stdout = '', stderr = '';
+      child.stdout.on('data', bytes => {
+        stdout += bytes;
+        if (stdout.includes('REA: http://127.0.0.1:')) resolve();
+      });
+      child.stderr.on('data', bytes => { stderr += bytes; });
+      child.once('error', reject);
+      child.once('exit', code => reject(Error(`Server exited before startup (${code}). ${stderr}`)));
+      timer = setTimeout(() => reject(Error('Alias server startup timed out.')), 5000);
+    });
+  } finally {
+    clearTimeout(timer);
+    if (child?.pid && child.exitCode === null && child.signalCode === null) {
+      const closed = once(child, 'close');
+      child.kill();
+      await closed;
+    }
+    await rm(alias, {force: true});
+    await rm(root, {recursive: true, force: true});
+  }
+});
 function fixture(){
   const s={schema:1,id:'stream-test-1',frame:1,width:16,height:8,active_height:8,mode5:true,interlace:false,
     regs:new Uint8Array(24),vram:new Uint8Array(65536),cram:new Uint8Array(128),vsram:new Uint8Array(80),ram:new Uint8Array(65536),zram:new Uint8Array(8192),rgb:new Uint8Array(16*8*3)};

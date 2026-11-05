@@ -2,7 +2,7 @@
 import http from 'node:http';
 import net from 'node:net';
 import {WebSocketServer,WebSocket} from 'ws';
-import {readFile, mkdir, stat} from 'node:fs/promises';
+import {readFile, mkdir, stat, realpath} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {decode, inspect, sprites} from './public/decoder.mjs';
@@ -275,7 +275,9 @@ export function createServer(dir,options={}) {
   };
   return server;
 }
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// The launcher may supply a junction path while Node uses the physical module path.
+const invoked = process.argv[1] && await realpath(process.argv[1]).catch(() => null);
+if (invoked && invoked === await realpath(fileURLToPath(import.meta.url))) {
   const dir = path.resolve(process.env.BLASTEM_REA_DIR || process.argv[2] || path.join(here,'session'));
   await mkdir(dir,{recursive:true});
   const port = Number(process.env.PORT || 8765);

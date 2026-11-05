@@ -55,7 +55,7 @@ No commercial ROMs, local captures, dependency downloads or compiled binaries ar
 
 The previously measured Windows configuration sustained **59.92 unique updates/s** across all six views over three minutes with Elemental Master (USA), with zero native capture gaps, delivery skips, browser drops or underruns. The highest sampled p95 frame interval was **17.1 ms**. This is the Genesis NTSC source rate. The presentation buffer adds about 100 ms of latency. A separate short H40 diagnostic run with active v0.4.0 catalog requests delivered about 60 atlas packets per second with zero native gaps or server skips.
 
-The implementation uses specialized capture writes, touched-row resets, a persistent nonblocking TCP stream, lossless pixel-run atlas transport and one WebGL canvas. Thirty-one JavaScript tests, native capture tests, and H40/H32 diagnostic ROM checks validate the implementation. See [measurements, supported modes and limitations](rea/README.md).
+The implementation uses specialized capture writes, touched-row resets, a persistent nonblocking TCP stream, lossless pixel-run atlas transport and one WebGL canvas. Thirty-two JavaScript tests, native capture tests, and H40/H32 diagnostic ROM checks validate the implementation. See [measurements, supported modes and limitations](rea/README.md).
 
 ```powershell
 npm test --prefix rea
