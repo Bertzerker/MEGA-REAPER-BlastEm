@@ -112,6 +112,81 @@ function anchor(result, id) {
     locator: item.locator, x: item.x, y: item.y};
 }
 
+async function attachWhileRunning(session, mode, entries) {
+  const {root, post, pin, command} = session;
+  const running = s => s.movie.mode === mode && !s.movie.paused && s.catalog.status === 'complete';
+  const seed = await wait(() => {
+    const s = session.latest;
+    return running(s) && (mode !== 'playback' || s.movie.frame > 3)
+      && observeCatalog(s, entries[0]).result.instances.some(item => item.id === spriteAddress && item.bounds.left <= 90)
+      && s;
+  });
+  const observe = (s, entry, selection) => post('/api/catalog/observe', {
+    capture: s.id, entry: entry.id, revision: entry.revision, ...selection,
+  });
+  const picked = await Promise.all([
+    observe(seed, entries[0], {instance: spriteAddress}),
+    observe(seed, entries[1], {point: {x: 32, y: 180}}),
+  ]);
+  assert.ok(picked.every(result => result.state === 'selected' && result.instance));
+  const frame = await wait(() => running(session.latest) && session.latest.frame > seed.frame && session.latest);
+  const tracked = await Promise.all(entries.map((entry, i) =>
+    observe(frame, entry, {follow: anchor(picked[i], picked[i].selected)})));
+  for (const [i, result] of tracked.entries()) {
+    assert.equal(result.state, 'following', result.reason);
+    assert.equal(result.capture, frame.id);
+    assert.equal(result.instance.locator, picked[i].instance.locator);
+    assert.equal(countPixels(Buffer.from(result.image, 'base64'), frame.width, frame.height), i === 0 ? 128 : 64);
+  }
+  await pin(frame.id);
+  await wait(() => running(session.latest) && session.latest.frame > frame.frame + 18);
+  const history = await json(root, '/api/history');
+  assert.ok(!history.some(capture => capture.id === frame.id), 'The view lease must outlive streaming history.');
+  const status = await json(root, '/api/session');
+  assert.equal(status.machine.state, 'running');
+  assert.equal(status.machine.mode, mode);
+  assert.equal(status.capabilities.browser_input.available, mode === 'idle');
+  const attachments = [];
+  for (const [i, result] of tracked.entries()) {
+    const entry = entries[i];
+    const note = await post('/api/comments', {
+      snapshot: result.capture, title: `${mode} ${entry.kind} observation`, markdown: 'Pinned tracked evidence.',
+      catalog: {entry: entry.id, revision: entry.revision, instance: result.selected},
+    }, 201);
+    assert.equal(note.capture, frame.id);
+    assert.equal(note.emulator_frame, frame.frame);
+    assert.equal(note.movie, mode === 'playback' ? frame.movie.id : null);
+    assert.equal(note.movie_frame, mode === 'playback' ? frame.movie.frame : null);
+    assert.equal(note.catalog.revision, entry.revision);
+    assert.equal(note.catalog.label, entry.label);
+    assert.deepEqual(note.catalog.instance, result.instance);
+    attachments.push({mode, entry, note, result, frame});
+  }
+  const after = await command('status');
+  assert.equal(after.mode, mode);
+  assert.equal(after.paused, false);
+  assert.ok(after.machine_frame > frame.frame + 18);
+  console.log(`PASS ${mode} tracked sprite and tile attachments after history eviction`);
+  return attachments;
+}
+
+function zipEntries(bytes) {
+  const files = new Map();
+  let offset = 0;
+  while (bytes.readUInt32LE(offset) === 0x04034b50) {
+    assert.equal(bytes.readUInt16LE(offset + 8), 0, 'Evidence ZIP uses stored entries.');
+    const size = bytes.readUInt32LE(offset + 18);
+    const nameLength = bytes.readUInt16LE(offset + 26);
+    const start = offset + 30 + nameLength + bytes.readUInt16LE(offset + 28);
+    const name = bytes.subarray(offset + 30, offset + 30 + nameLength).toString('utf8');
+    assert.ok(!files.has(name));
+    files.set(name, bytes.subarray(start, start + size));
+    offset = start + size;
+  }
+  assert.equal(bytes.readUInt32LE(offset), 0x02014b50);
+  return files;
+}
+
 function exact(s) {
   return {
     cpu: s.cpu_cycles, vdp: s.vdp_cycles,
@@ -185,7 +260,8 @@ async function measure(session, activeEntry) {
 
 const recorded = new Map();
 const replayed = new Map();
-let movie, entry, note, originalLog, oldRom, observed, onMetrics, offMetrics;
+const attachments = [];
+let movie, entry, tileEntry, originalLog, oldRom, onMetrics, offMetrics;
 await native(h40, true, async session => {
   const {root, post, pin, command} = session;
   await post('/api/control', {action: 'pause_capture', owner: 'catalog-fixture'});
@@ -247,6 +323,7 @@ await native(h40, true, async session => {
     selection: {view: 'b', x: 30, y: 25, palette: false}});
   assert.equal(saved.entry.kind, 'tile');
   assert.equal(saved.entry.selectors[0].pieces[0].palette, null);
+  tileEntry = saved.entry;
 
   let followStart = all.result;
   for (let i = 0; i < 14 && !followStart.instances.some(item => item.id === spriteAddress && item.bounds.left <= 88); i++) {
@@ -290,12 +367,15 @@ await native(h40, true, async session => {
   assert.ok(afterRestore.catalog.generation > generationBefore);
   assert.notEqual(timelineOf(afterRestore), previous.timeline);
 
-  // Record, replay with tracking enabled, and attach a pinned replay observation.
+  await post('/api/movie', {action: 'play'});
+  attachments.push(...await attachWhileRunning(session, 'idle', [entry, tileEntry]));
+
+  // Record, replay with tracking enabled, and attach both tracked objects.
   session.visit(s => {
     if (s.movie?.mode === 'recording') recorded.set(s.movie.frame, {exact: exact(s), runs: sha256(s.catalog_runs || '')});
   });
   movie = await post('/api/movie', {action: 'record', title: 'Original catalog verification'});
-  await wait(() => recorded.size >= 46);
+  await wait(() => recorded.size >= 64);
   await post('/api/movie', {action: 'stop'});
   const inputFile = path.join(folder, 'movies', movie.id, 'inputs.rmt');
   originalLog = await readFile(inputFile);
@@ -304,31 +384,16 @@ await native(h40, true, async session => {
   });
   await post('/api/movie', {action: 'speed', speed: 50});
   await post('/api/movie', {action: 'replay', id: movie.id});
-  let replayCapture = await wait(() => {
-    const s = session.latest;
-    return s.movie.mode === 'playback' && s.movie.frame > 3 && s.catalog.status === 'complete'
-      && observeCatalog(s, entry).result.instances.some(item => item.id === spriteAddress && item.bounds.left <= 90) && s;
-  });
+  const replayAttachments = await attachWhileRunning(session, 'playback', [entry, tileEntry]);
+  attachments.push(...replayAttachments);
+  const replayCapture = replayAttachments[0].frame;
   assert.equal(observeCatalog(replayCapture, entry, {follow: previous}).result.state, 'lost');
-  let playbackAnchor = anchor(observeCatalog(replayCapture, entry).result, spriteAddress);
-  for (let i = 0; i < 3; i++) {
-    replayCapture = await wait(() => session.latest.id !== playbackAnchor.capture && session.latest);
-    const tracking = observeCatalog(replayCapture, entry, {follow: playbackAnchor}).result;
-    assert.equal(tracking.state, 'following');
-    assert.equal(tracking.selected, spriteAddress);
-    playbackAnchor = anchor(tracking, tracking.selected);
-  }
-  await pin(replayCapture.id);
-  observed = await post('/api/catalog/observe', {capture: replayCapture.id, entry: entry.id,
-    revision: entry.revision, instance: spriteAddress});
-  await wait(() => session.latest.movie.frame > replayCapture.movie.frame + 18);
-  note = await post('/api/comments', {snapshot: replayCapture.id, title: 'Pinned playback observation', markdown: 'Evidence.',
-    catalog: {entry: entry.id, revision: entry.revision, instance: spriteAddress}}, 201);
-  assert.equal(note.capture, replayCapture.id);
-  assert.equal(note.movie_frame, replayCapture.movie.frame);
-  assert.equal(note.catalog.label, entry.label);
   const edited = await post('/api/catalog', {action: 'edit', revision: 3, capture: replayCapture.id, entry: entry.id,
     label: 'Renamed later', notes: 'Persistent investigator note.', selectors: entry.selectors});
+  const editedTile = await post('/api/catalog', {action: 'edit', revision: 4, capture: replayCapture.id, entry: tileEntry.id,
+    label: 'Backdrop renamed later', notes: 'Persistent investigator note.', selectors: tileEntry.selectors});
+  assert.equal(edited.entry.revision, entry.revision + 1);
+  assert.equal(editedTile.entry.revision, tileEntry.revision + 1);
   const ended = await wait(async () => {
     const state = await command('status');
     return state.mode === 'ended' && state;
@@ -355,7 +420,7 @@ await native(h40, false, async session => {
   await pin(session.latest.id);
   const book = await json(session.root, '/api/catalog?capture=' + session.latest.id);
   assert.ok(book.entries.some(item => item.label === 'Renamed later' && item.selectors.length === 2));
-  assert.ok(book.entries.some(item => item.label === 'Repeating backdrop'));
+  assert.ok(book.entries.some(item => item.label === 'Backdrop renamed later' && item.revision === tileEntry.revision + 1));
   assert.equal(session.latest.catalog.status, 'disabled');
   const off = new Map();
   session.visit(s => {
@@ -400,32 +465,71 @@ await native(h32, true, async session => {
 
 const archive = createServer(folder);
 const root = await listen(archive);
+const matrix = [];
 try {
   async function bytes(route) {
     const response = await fetch(root + route);
     assert.equal(response.status, 200);
     return Buffer.from(await response.arrayBuffer());
   }
-  const saved = unpack(await bytes('/api/evidence?note=' + note.id));
-  assert.equal(saved.archive.catalog.label, entry.label);
-  assert.equal(saved.id, observed.capture);
-  assert.equal(saved.movie.frame, note.movie_frame);
-  const catalog = await bytes(`/api/comments/${note.id}/catalog.json`);
-  assert.equal(sha256(catalog), note.evidence.catalog.sha256);
-  const decoded = JSON.parse(catalog);
-  assert.equal(decoded.movie.input_row, note.movie_frame);
-  assert.ok(/^[0-9a-f]{8}$/.test(decoded.movie.input_checksum));
-  assert.equal(decoded.observation.instance.id, spriteAddress);
-  const png = await bytes(`/api/comments/${note.id}/isolation.png`);
-  assert.deepEqual(png, Buffer.from(observed.image, 'base64'));
-  assert.equal(sha256(png), note.evidence.isolation.sha256);
-  const zip = await bytes(`/api/movies/${movie.id}/export`);
-  assert.ok(zip.includes(Buffer.from(`comments/${note.id}/catalog.json`)));
-  assert.ok(zip.includes(catalog) && zip.includes(png) && zip.includes(originalLog));
-  const commentZip = await bytes(`/api/comments/${note.id}/export`);
-  assert.ok(commentZip.includes(catalog) && commentZip.includes(png));
-  console.log('PASS saved review and both verified exports after restart');
+  const movieZip = await bytes(`/api/movies/${movie.id}/export`);
+  const movieFiles = zipEntries(movieZip);
+  assert.deepEqual(movieFiles.get('inputs.rmt'), originalLog);
+  await writeFile(path.join(folder, 'movie-evidence.zip'), movieZip);
+  for (const {mode, entry, note, result, frame} of attachments) {
+    const saved = unpack(await bytes('/api/evidence?note=' + note.id));
+    assert.deepEqual(saved.archive.catalog, note.catalog);
+    assert.equal(saved.id, result.capture);
+    assert.equal(saved.frame, frame.frame);
+    assert.equal(saved.movie.mode, mode);
+    assert.deepEqual(saved.rgb, frame.rgb);
+    assert.deepEqual(saved.ram, frame.ram);
+    const base = `/api/comments/${note.id}`;
+    const [catalog, png, snapshot, commentZip] = await Promise.all([
+      bytes(base + '/catalog.json'), bytes(base + '/isolation.png'),
+      bytes(base + '/snapshot.json.gz'), bytes(base + '/export'),
+    ]);
+    const decoded = JSON.parse(catalog);
+    assert.deepEqual(decoded.catalog, entry);
+    assert.equal(decoded.definition_sha256, sha256(JSON.stringify(entry)));
+    assert.equal(decoded.observation.capture, frame.id);
+    assert.deepEqual(decoded.observation.instance, result.instance);
+    assert.deepEqual(png, Buffer.from(result.image, 'base64'));
+    assert.equal(sha256(catalog), note.evidence.catalog.sha256);
+    assert.equal(sha256(png), note.evidence.isolation.sha256);
+    assert.equal(sha256(snapshot), note.evidence.snapshot.sha256);
+    assert.equal(decoded.snapshot_sha256, note.evidence.snapshot.sha256);
+    const fromMovie = mode === 'playback';
+    if (fromMovie) {
+      const rowOffset = 56 + note.movie_frame * 8;
+      assert.equal(saved.movie.frame, note.movie_frame);
+      assert.deepEqual(decoded.movie, {
+        id: movie.id, format: 'RMTAS001', frame: note.movie_frame, input_row: note.movie_frame,
+        input_checksum: originalLog.readUInt32LE(rowOffset + 4).toString(16).padStart(8, '0'),
+        recorded_pad_masks: [originalLog.readUInt16LE(rowOffset), originalLog.readUInt16LE(rowOffset + 2)],
+      });
+    } else assert.equal(decoded.movie, null);
+    const commentFiles = zipEntries(commentZip), prefix = `comments/${note.id}/`;
+    for (const [name, evidence] of [['catalog.json', catalog], ['isolation.png', png], ['snapshot.json.gz', snapshot]]) {
+      assert.deepEqual(commentFiles.get(name), evidence);
+      if (fromMovie) assert.deepEqual(movieFiles.get(prefix + name), evidence);
+      else assert.ok(!movieFiles.has(prefix + name));
+    }
+    const report = `${mode}-${entry.kind}-evidence.zip`;
+    await writeFile(path.join(folder, report), commentZip);
+    matrix.push({
+      mode, kind: entry.kind, capture: note.capture, frame: note.emulator_frame, movie_frame: note.movie_frame,
+      entry: entry.id, revision: entry.revision, label: entry.label, instance: result.selected,
+      evidence: note.evidence, note: note.id, comment_zip: report,
+    });
+  }
+  assert.deepEqual(await readFile(path.join(folder, 'movies', movie.id, 'inputs.rmt')), originalLog);
+  assert.equal(matrix.length, 4);
+  console.log('PASS all four saved observations and evidence exports after both catalog edits and restart');
 } finally { await new Promise(resolve => archive.close(resolve)); }
 
-await writeFile(path.join(folder, 'result.json'), JSON.stringify({note, onMetrics, offMetrics}, null, 2));
+await writeFile(path.join(folder, 'result.json'), JSON.stringify({
+  note: attachments.find(item => item.mode === 'playback' && item.entry.kind === 'sprite').note,
+  matrix, movie: movie.id, input_log_sha256: sha256(originalLog), onMetrics, offMetrics,
+}, null, 2));
 console.log('PASS', folder);
