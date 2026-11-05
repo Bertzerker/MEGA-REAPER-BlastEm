@@ -110,6 +110,30 @@ This increment supports standard Genesis cartridges and up to two 3/6-button con
 
 Writes require `Origin: http://127.0.0.1:<port>` and `Content-Type: application/json`; request size and IDs are bounded. `node rea/test_native_movie.mjs <local-rom>` performs an isolated one-instance record/replay, pause/step/speed and comment/export check and closes its emulator afterward.
 
+## Sprite and tile catalog
+
+Select a Composite, Sprites, Plane A, Plane B or Window pixel and click **Add to catalog**. This holds the capture while the emulator continues. The catalog shows the selected pattern, palette, and table address. For a sprite it also shows the SAT slot and link that the VDP used. Choose up to four linked sprite pieces and use **Pick selected pixel** to update the seed. Use **Create catalog entry** or **Append to selected entry** to add an animation alternative. The editor accepts names, notes and JSON selector alternatives. Selectors can match a pattern range and any palette by using `null`.
+
+The ROM SHA-1 selects a versioned catalog in `rea/session/catalogs/`. **Reload catalog** reads it from disk. Saves check the catalog revision and retain the editor text on conflict. **Memory diagnostic pick** can seed a pattern from copied VRAM or a slot from the copied SAT. Its seed records the diagnostic source.
+
+The local API exposes `GET /api/catalog?capture=ID` and same-origin JSON POSTs to `/api/catalog/pick`, `/api/catalog/observe` and `/api/catalog`. Each request names a retained capture. An observation names the entry ID and revision and accepts an instance ID, a point in the isolated image, or a follow anchor. A write uses the catalog revision. Create and append resolve the submitted pixel or diagnostic selection on the server. An edited selector retains its seed only when its definition still matches.
+
+**Show all matches** displays captured samples on transparency at their native screen positions. Choose a listed instance or click its isolated image to follow it. The catalog samples the displayed frame up to eight times a second. Follow requires a consistent capture timeline and hardware locator within a 24-pixel motion gate and a gap of at most 12 frames. Sprite follow also checks nearby competing matches. A miss or ambiguity requires a new pick. Tile follow uses the name-table address and screen origin. Software object identity and world coordinates require game-specific evidence.
+
+**Attach to comment** holds the observation's exact capture. The comment retains the entry ID, revision, definition digest, matched bounds, evidence class, native ROM/build identity and movie input row when available. The saved PNG and JSON attachment have SHA-256 hashes in `note.json`. **Inspect saved frame** reopens that observation alongside its original atlas and memory. **Return to live** switches the viewer back to the current capture. Movie and standalone comment ZIP exports include the attachment.
+
+Native attribution is supported for a single Genesis cartridge in stable, non-interlaced Mode 5 H32/H40. Sprite attribution covers samples admitted to the sprite line buffer. The sprite layer can therefore show a sample behind a plane, while a sample suppressed by another sprite is unavailable. Shadow/highlight operators keep their original transparent treatment. Partial captures report missing coverage or the dropped-sample count. Selectors identify pattern slots, which games can reuse for different graphics. Source launches enable catalog capture by default. Use `Start-REA.ps1 -NoCatalogCapture` or set `BLASTEM_REA_CATALOG=0` before starting the portable launcher to measure or run with attribution disabled.
+
+The original fixture exercises SAT chains, motion, animation, disappearance, slot reuse, repeated tiles and palette changes. Generate and test it from the repository root with the installed interpreter:
+
+```powershell
+& 'C:/Users/Chris/AppData/Local/Python/bin/python.exe' rea/make_test_rom.py --catalog-tests
+& 'C:/Users/Chris/AppData/Local/Python/bin/python.exe' rea/make_test_rom.py --catalog-tests --h32
+node rea/test_native_catalog.mjs
+```
+
+In the short Windows H40 fixture run, 316 captures and 316 WebSocket deliveries arrived in 5.27 seconds with active catalog requests. Disabled capture delivered 316 in 5.28 seconds. Both runs recorded zero native gaps and server skips. This scene carried 129,504 attribution bytes per native capture. Native process CPU time was approximately 3.07 versus 2.87 ms per capture. These are fixture and transport measurements. Browser presentation depends on the host and scene.
+
 ## Build and validate
 
 `Build-Windows.ps1 -Version 0.3.0` creates the portable ZIP from the built emulator, SDL2 and GLEW development files. It downloads the pinned official Node.js 24.20.0 x64 archive and verifies its pinned SHA-256, installs only locked production dependencies without lifecycle scripts, compiles the Win32 launcher using MinGW in WSL, includes license notices, and writes a source-commit/file-hash manifest plus a ZIP checksum. Add `-BuildEmulator -PythonPath '/mnt/c/path/to/python.exe'` to run the native emulator build too. An existing output directory is never overwritten implicitly. The inherited upstream `v*` release workflow does not package REA; MEGA REAPER release tags use `mega-reaper-v*` instead.

@@ -2,6 +2,7 @@
 import {readFile} from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import {decode,inspect,word,sprites,spritePixel} from './public/decoder.mjs';
+import {pickCatalog} from './catalog.mjs';
 const s=decode(JSON.parse(await readFile(process.argv[2]||'rea/test-output/raster-split-capture.json','utf8')));
 assert.equal(s.raster.valid,true);assert.equal(s.raster.complete,true);
 const pixel=(view,x,y)=>inspect(s,view,x+s.border_left,y+s.border_top);
@@ -30,6 +31,16 @@ assert.notEqual(spritePixel(s,sprites(s),240,64).value,0,'end-of-frame SAT recon
 assert.equal(pixel('sprites',80,100).sprite_control,'highlight');
 assert.equal(pixel('sprites',100,120).sprite_control,'shadow');
 assert.equal(pixel('sprites',80,100).rgba[3],0);
+if(s.catalog?.status==='complete'){
+  const sample=(view,x,y)=>pickCatalog(s,{view,x:x+s.border_left,y:y+s.border_top}).selector.seed.samples[0];
+  assert.deepEqual([sample('a',96,72).layer,sample('a',96,72).tile],['a',2]);
+  assert.deepEqual([sample('window',280,40).layer,sample('window',20,160).layer],['window','window']);
+  assert.notEqual(sample('b',16,40).tile,sample('b',16,160).tile,'Raster tile identity follows the actual scroll');
+  assert.deepEqual([sample('sprites',80,100).slot,sample('sprites',100,120).slot],[21,22]);
+  assert.deepEqual([sample('sprites',80,100).tile,sample('sprites',100,120).tile],[4,5]);
+  assert.throws(()=>sample('sprites',240,64),/no attributed sample/);
+  console.log('PASS: captured catalog identity follows A, Window, scroll, sprite overflow and both S/H operators.');
+}
 const layers={1:1,2:3,3:2,4:0},count=s.width*s.height;let checked=0;
 for(let offset=0;offset<count;offset++){
   const flags=s.raster_flags[offset],layer=layers[flags&7];

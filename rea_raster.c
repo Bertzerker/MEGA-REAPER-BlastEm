@@ -26,7 +26,14 @@ void rea_raster_init(vdp_context *v)
 	const char *stream = getenv("BLASTEM_REA_STREAM_PORT");
 	if (v->type == VDP_GENESIS && stream && *stream) {
 		v->rea_raster = calloc(1, sizeof(rea_raster));
-		if (v->rea_raster) v->rea_raster->row = -1;
+		if (v->rea_raster) {
+			v->rea_raster->row = -1;
+			const char *catalog = getenv("BLASTEM_REA_CATALOG");
+			if (catalog && !strcmp(catalog, "1")) {
+				v->rea_raster->catalog = calloc(1, sizeof(rea_catalog));
+				if (v->rea_raster->catalog) v->rea_raster->catalog->partial = 1;
+			}
+		}
 	}
 }
 void rea_raster_clear(vdp_context *v)
@@ -46,7 +53,30 @@ void rea_raster_clear(vdp_context *v)
 		memset(r->flags+start,0,count);
 	}
 	memset(r->inputs,0,sizeof(r->inputs));
+	if (r->catalog) {
+		rea_catalog *c = r->catalog;
+		c->run_count = c->dropped = c->partial = c->mode = 0;
+		memset(c->last, 0, sizeof(c->last));
+		memset(c->inputs, 0, sizeof(c->inputs));
+	}
 	r->row = -1; r->have_rows = r->unsupported = 0;
+}
+void rea_catalog_discontinuity(vdp_context *v)
+{
+	if (v->rea_raster && v->rea_raster->catalog) {
+		rea_catalog *c = v->rea_raster->catalog;
+		memset(c->sprite, 0, sizeof(c->sprite));
+		memset(c->draw, 0, sizeof(c->draw));
+		memset(c->scroll, 0, sizeof(c->scroll));
+		memset(c->links, 0, sizeof(c->links));
+		memset(c->scan_valid, 0, sizeof(c->scan_valid));
+		c->name_valid = 0;
+		memset(c->inputs, 0, sizeof(c->inputs));
+		memset(c->last, 0, sizeof(c->last));
+		c->run_count = c->dropped = c->mode = 0;
+		c->generation++;
+		c->partial = 1;
+	}
 }
 void rea_raster_line(vdp_context *v, int row)
 {
@@ -58,6 +88,35 @@ void rea_raster_line(vdp_context *v, int row)
 		else { if (row < r->first_row) r->first_row = row; if (row > r->last_row) r->last_row = row; }
 	}
 	if (!(v->regs[REG_MODE_2] & BIT_MODE_5) || v->s32x_vid || (v->test_regs[0] & 0x1C0)) v->rea_raster->unsupported = 1;
+}
+static inline void catalog_sample(rea_catalog *c, unsigned layer, unsigned x, unsigned row, uint8_t sample)
+{
+	if (!(sample & 15)) return;
+	uint64_t key = c->inputs[layer][x];
+	if (!key) {
+		c->partial = 1;
+		return;
+	}
+	uint8_t *run;
+	if (key == c->last[layer]) {
+		run = c->runs[c->last_run[layer]];
+		if ((run[2] | run[3] << 8) == row
+			&& (run[0] | run[1] << 8) + run[4] == x && run[4] < 255) {
+			run[4]++;
+			return;
+		}
+	}
+	if (c->run_count == REA_CATALOG_MAX_RUNS) {
+		c->dropped++;
+		return;
+	}
+	c->last[layer] = key;
+	c->last_run[layer] = c->run_count;
+	run = c->runs[c->run_count++];
+	run[0] = x; run[1] = x >> 8;
+	run[2] = row; run[3] = row >> 8;
+	run[4] = 1; run[5] = layer;
+	for (unsigned i = 0; i < 6; i++) run[6 + i] = key >> (i * 8);
 }
 void rea_raster_inputs(vdp_context *v, unsigned x, uint8_t sprite, uint8_t a, uint8_t b)
 {
@@ -74,6 +133,16 @@ void rea_raster_emit(vdp_context *v, unsigned x, unsigned count, int composite)
 	if (!r || r->row < 0 || r->row >= 512 || !v->output) return;
 	if (!(v->regs[REG_MODE_2] & BIT_MODE_5) || (v->test_regs[0] & 0x1C0)) { r->unsupported = 1; return; }
 	const int highlight = v->regs[REG_MODE_4] & BIT_HILIGHT;
+	rea_catalog *catalog = r->catalog;
+	if (catalog && composite) {
+		unsigned mode = v->regs[REG_MODE_4] & BIT_INTERLACE ? 4 : v->regs[REG_MODE_4] & BIT_H40 ? 2 : 1;
+		catalog->mode |= mode;
+		for (unsigned i = x, end = x + count; i < end && i < LINEBUF_SIZE; i++) {
+			for (unsigned layer = 0; layer < 4; layer++) {
+				catalog_sample(catalog, layer, i, r->row, r->inputs[layer][i]);
+			}
+		}
+	}
 	for (unsigned end = x + count; x < end && x < LINEBUF_SIZE; x++) {
 		unsigned offset = r->row * LINEBUF_SIZE + x;
 		uint8_t source = composite ? v->layer_debug_buf[x] & DBG_SRC_MASK : DBG_SRC_BG;

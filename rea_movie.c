@@ -250,6 +250,7 @@ static void restore_checkpoint(unsigned char *data,size_t size)
     g->m68k->sync_cycle=g->m68k->target_cycle=g->m68k->cycles+1;
     g->vdp->output_lines=g->vdp->h40_lines=0;g->vdp->pushed_frame=1;
     g->vdp->output=g->vdp->fb=NULL;rea_raster_clear(g->vdp);
+    rea_catalog_discontinuity(g->vdp);
     execution_generation++;
 }
 void rea_movie_service(void)

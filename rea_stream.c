@@ -6,6 +6,7 @@
 #include "rea_raster.h"
 #include "rea_movie.h"
 #include "genesis.h"
+#include "blastem.h"
 #include "net.h"
 #include <stdlib.h>
 #include <string.h>
@@ -126,8 +127,9 @@ void rea_stream_capture(vdp_context *v, unsigned width, unsigned height, uint64_
 {
 	if (!ready_stream() || !flush_packet()) return;
 	genesis_context *g = (genesis_context *)v->system;
-	char header[4096], extras[384];
+	char header[4096], extras[384], catalog_extra[80] = "";
 	rea_raster *r = v->rea_raster;
+	rea_catalog *catalog = r ? r->catalog : NULL;
 	int raster_valid = r && !r->unsupported;
 	unsigned covered = 0, pixels = width * height;
 	if (raster_valid) {
@@ -135,8 +137,19 @@ void rea_stream_capture(vdp_context *v, unsigned width, unsigned height, uint64_
 			if (r->rgba[REA_SOURCE][((y+v->top_offset)*LINEBUF_SIZE+x)*4+3]) covered++;
 		}
 	}
+	const system_media *media = current_media();
+	int catalog_content = v->system->type == SYSTEM_GENESIS && media && !media->chain && !g->expansion && !g->mars;
+	int catalog_supported = catalog && catalog_content && raster_valid
+		&& catalog->mode == (width == LINEBUF_SIZE ? 2 : 1)
+		&& !(v->regs[REG_MODE_4] & BIT_INTERLACE);
+	unsigned catalog_bytes = catalog_supported ? catalog->run_count * REA_CATALOG_RUN_BYTES : 0;
+	const char *catalog_state = !catalog ? "disabled" : !catalog_supported ? "unsupported"
+		: catalog->partial || catalog->dropped || covered != pixels ? "partial" : "complete";
+	if (catalog_supported) snprintf(catalog_extra, sizeof(catalog_extra),
+		",{\"name\":\"catalog_runs\",\"length\":%u}", catalog_bytes);
 	if (raster_valid) snprintf(extras, sizeof(extras),
-		"[{\"name\":\"raster_rgba\",\"length\":%u},{\"name\":\"raster_samples\",\"length\":%u},{\"name\":\"raster_flags\",\"length\":%u}]",pixels*20,pixels*4,pixels);
+		"[{\"name\":\"raster_rgba\",\"length\":%u},{\"name\":\"raster_samples\",\"length\":%u},{\"name\":\"raster_flags\",\"length\":%u}%s]",
+		pixels*20,pixels*4,pixels,catalog_extra);
 	else strcpy(extras, "[]");
 	int length = snprintf(header, sizeof(header),
 		"{\"metadata\":{\"schema\":1,\"id\":\"%llu-%u-%llu\",\"frame\":%u,"
@@ -144,6 +157,7 @@ void rea_stream_capture(vdp_context *v, unsigned width, unsigned height, uint64_
 		"\"nominal_hz\":%.6f,\"movie\":%s,"
 		"\"border_left\":%u,\"border_top\":%u,\"active_height\":%u,"
 		"\"mode5\":%s,\"interlace\":%s,\"sprite_collision_flag\":%s,"
+		"\"catalog\":{\"version\":1,\"status\":\"%s\",\"row_origin\":%u,\"dropped_samples\":%u,\"mode\":%u,\"generation\":%u,\"single_cartridge\":%s},"
 		"\"raster\":{\"valid\":%s,\"complete\":%s,\"covered_pixels\":%u,\"width\":%u,\"height\":%u,\"field_even\":%s,"
 		"\"layers\":[\"sprites\",\"a\",\"b\",\"window\",\"source\"],\"point\":\"compositor inputs resolved at DAC slots\"}},"
 		"\"lengths\":[24,65536,128,%u,65536,8192,%u],\"extra\":%s}",
@@ -154,6 +168,9 @@ void rea_stream_capture(vdp_context *v, unsigned width, unsigned height, uint64_
 		v->regs[REG_MODE_2] & BIT_MODE_5 ? "true":"false",
 		v->regs[REG_MODE_4] & BIT_INTERLACE ? "true":"false",
 		v->flags2 & FLAG2_SPRITE_COLLIDE ? "true":"false",
+		catalog_state, v->top_offset, catalog ? catalog->dropped : 0, catalog ? catalog->mode : 0,
+		catalog ? catalog->generation : 0,
+		catalog_content ? "true" : "false",
 		raster_valid ? "true":"false", raster_valid && covered == pixels ? "true":"false", covered, width,height,
 		v->flags2 & FLAG2_EVEN_FIELD ? "true":"false",v->vsram_size*2, width*height*3,extras);
 	if (length < 0 || length >= sizeof(header)) return;
@@ -188,6 +205,10 @@ void rea_stream_capture(vdp_context *v, unsigned width, unsigned height, uint64_
 		for (unsigned y=0; y<height; y++) {
 			memcpy(p, r->flags+(y+v->top_offset)*LINEBUF_SIZE, width); p+=width;
 		}
+	}
+	if (catalog_bytes) {
+		memcpy(p, catalog->runs, catalog_bytes);
+		p += catalog_bytes;
 	}
 	pending = (unsigned)(p-packet); u32le(packet, pending-4);
 	rea_movie_published(sequence,v->frame);

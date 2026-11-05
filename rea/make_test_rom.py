@@ -6,8 +6,12 @@ import struct
 import argparse
 parser=argparse.ArgumentParser()
 parser.add_argument('--raster-tests',action='store_true')
+parser.add_argument('--catalog-tests',action='store_true')
 parser.add_argument('--h32',action='store_true')
 args=parser.parse_args();raster_tests=args.raster_tests
+catalog_tests=args.catalog_tests
+if raster_tests and catalog_tests:
+    parser.error('Choose one diagnostic mode')
 
 out = bytearray(128 * 1024)
 def put(a, data):
@@ -37,7 +41,7 @@ for i in range(64): move([0,0x000E,0x00E0,0x0E00][i%4],0xC00000)
 vram(0)
 for value in ([0,0x1111,0x2222,0x3333,0xEEEE,0xFFFF] if raster_tests else [0,0x1111,0x2222,0x3333]):
     for _ in range(16): move(value,0xC00000)
-for addr,tile in ([(0xB000,2),(0xC000,0),(0xE000,1)] if raster_tests else [(0xC000,0),(0xE000,1)]):
+for addr,tile in ([(0xB000,2),(0xC000,0),(0xE000,1)] if raster_tests or catalog_tests else [(0xC000,0),(0xE000,1)]):
     vram(addr)
     for index in range(64*32):
         value=tile
@@ -52,20 +56,28 @@ if raster_tests:
         values=([128+64,index+1,3,128+index*12] if index<21 else
             [128+100,22,0xE004,128+80] if index==21 else [128+120,0,0xE005,128+100])
         for value in values:move(value,0xC00000)
+elif catalog_tests:
+    # Two identical anchors with separately linked companion pieces. The
+    # selected anchor moves, changes pattern, disappears, then reuses its slot.
+    for index,(x,y,tile) in enumerate([(72,60,3),(82,60,2),(200,60,3),(210,60,2)]):
+        for value in [128+y,index+1 if index<3 else 0,tile,128+x]:
+            move(value,0xC00000)
 else:
     for value in [128+60,0,3,128+80]:move(value,0xC00000)
 vram(0xFC00);move(0,0xC00000);move(0,0xC00000)
 move(0x40000010,0xC00004,4) # VSRAM write address 0
 move(0,0xC00000);move(0,0xC00000)
 if raster_tests:reg(17,0x90);reg(12,8 if args.h32 else 0x89) # Window x>=256; shadow/highlight
+if catalog_tests:reg(17,0x8E if args.h32 else 0x90)
 reg(1,0x44) # enable Mode 5 display
 move(0x52454131,0xFF0010,4) # known bus-order sentinel 'REA1'
-if raster_tests:
+if raster_tests or catalog_tests:
     def wait_line(line):
         w(0x3039);l(0xC00008) # move.w HV counter,d0
         w(0x0240);w(0xFF00) # andi.w
         w(0x0C40);w(line<<8) # cmpi.w
         w(0x66F0) # bne.s back to HV read
+if raster_tests:
     loop=len(code)
     wait_line(224)
     move(0xC0020000,0xC00004,4);move(0x000E,0xC00000) # red at VBLANK
@@ -81,12 +93,26 @@ if raster_tests:
     wait_line(176);vram(32)
     for _ in range(16):move(0,0xC00000) # blank tile 1 during the bottom of the frame
     w(0x6000);w((loop-len(code))&0xFFFF)
+elif catalog_tests:
+    loop=len(code)
+    states=[(72,60,3),(74,60,2),(76,60,3),(78,60,2),(80,60,3),
+            (82,60,2),(84,60,3),(86,60,2),(86,0,3),(160,60,3),(162,60,2),(164,60,3)]
+    for index,(x,y,tile) in enumerate(states):
+        wait_line(224)
+        vram(0xD800)
+        for value in [128+y,1,tile,128+x,128+y,2,2,138+x]:
+            move(value,0xC00000)
+        vram(0xE000)
+        move(0x2001 if index&1 else 1,0xC00000)
+        move(index,0xFF0014)
+        wait_line(0)
+    w(0x6000);w((loop-len(code))&0xFFFF)
 else:
     w(0x52B9);l(0xFF0000);w(0x60F8) # increment RAM counter forever
 put(0x200,code)
 checksum=sum(struct.unpack('>'+str((len(out)-0x200)//2)+'H',out[0x200:]))&65535
 put(0x18E,struct.pack('>H',checksum))
-dest=Path(__file__).parent/'test-output'/(('raster-test' if raster_tests else 'inspection-test')+('-h32' if args.h32 else '')+'.bin')
+dest=Path(__file__).parent/'test-output'/(('raster-test' if raster_tests else 'catalog-test' if catalog_tests else 'inspection-test')+('-h32' if args.h32 else '')+'.bin')
 dest.parent.mkdir(exist_ok=True)
 dest.write_bytes(out)
 print(dest)

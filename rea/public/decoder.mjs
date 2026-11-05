@@ -11,7 +11,7 @@ export const word = (b, a) => (b[a & 65535] << 8) | b[(a + 1) & 65535];
 export function decode(raw) {
   const s = {...raw};
   for (const k of ['regs','vram','cram','vsram','ram','zram','rgb']) s[k] = unhex(raw[k]);
-  for (const k of ['raster_rgba','raster_samples','raster_flags'])if(typeof raw[k]==='string')s[k]=unhex(raw[k]);
+  for (const k of ['raster_rgba','raster_samples','raster_flags','catalog_runs'])if(typeof raw[k]==='string')s[k]=unhex(raw[k]);
   return s;
 }
 export function palette(s, index) {

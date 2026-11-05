@@ -1,7 +1,7 @@
 // Binary live-view transport. The JSON snapshot API remains available for AI clients.
 import {decodeAtlas} from './rle.mjs';
 export const fields=['regs','vram','cram','vsram','ram','zram','rgb'];
-export const extraFields=['raster_rgba','raster_samples','raster_flags'];
+export const extraFields=['raster_rgba','raster_samples','raster_flags','catalog_runs'];
 export function unpack(buffer) {
   const bytes=ArrayBuffer.isView(buffer)?new Uint8Array(buffer.buffer,buffer.byteOffset,buffer.byteLength):new Uint8Array(buffer);
   const headerLength=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength).getUint32(0,true);

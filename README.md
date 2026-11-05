@@ -14,6 +14,7 @@ Based on **BlastEm by Mike Pavone and contributors**, through the [ulalume/blast
 - Persistent frame comments with Markdown, JSON code blocks, Mermaid previews, and captured render/memory evidence.
 - A graphics-left workbench with a side inspector, focused atlas views, recoverable note drafts and conflict-safe saves.
 - Compatible named machine checkpoints, bounded two-pad experiments, copied-memory watches and explicit session capabilities.
+- A local sprite and tile catalog with captured VDP selectors, instance follow and durable comment attachments.
 
 All six graphics views come from one emulation pass and travel together as one atlas. Captured colors preserve mid-frame palette, scrolling and Window changes. The isolated views show inputs before other layers hide them. Optional VRAM tiles and SAT bounds are separately labeled snapshot diagnostics; SAT rectangles are not gameplay hitboxes.
 

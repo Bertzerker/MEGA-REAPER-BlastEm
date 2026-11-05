@@ -12,9 +12,11 @@ import {AtlasRenderer} from './atlas.mjs';
 import {AtlasEncoder} from './public/rle.mjs';
 import {MovieStore} from './movie.mjs';
 import {SessionBridge,FrameWatch,contextOf,compatible} from './bridge.mjs';
+import {CatalogStore,catalogRom,pickCatalog,observeCatalog,catalogAttachment,validateCatalogCapture} from './catalog.mjs';
 const here = path.dirname(fileURLToPath(import.meta.url));
 export function createServer(dir,options={}) {
   const movies=new MovieStore(dir,{port:Number(process.env.BLASTEM_REA_CONTROL_PORT),...options.movie});
+  const catalogs=new CatalogStore(dir);
   const bridge=new SessionBridge(dir,movies),watch=new FrameWatch(),leases=new Map(),captureWaiters=new Set();
   const history = new Map();
   const pinned = new Map();
@@ -33,13 +35,18 @@ export function createServer(dir,options={}) {
     return history.get(id)||pinned.get(id)||Array.from(leases.values()).find(item=>item.raw.id===id)?.raw;
   }
   function pin(raw,owner,purpose='view'){
-    if(!/^[a-zA-Z0-9-]{1,64}$/.test(owner||'')||!['view','baseline'].includes(purpose))throw Error('Invalid evidence lease owner/purpose');
+    if(!/^[a-zA-Z0-9-]{1,64}$/.test(owner||'')||!['view','baseline','catalog'].includes(purpose))throw Error('Invalid evidence lease owner/purpose');
     if(!raw)throw Object.assign(Error('Capture expired or unknown. Resume live inspection to select another frame.'),{status:409,code:'capture_expired'});
     const key=owner+':'+purpose;retained(raw.id);
     if(leases.size>=16&&!leases.has(key))throw Object.assign(Error('Evidence retention is full. Release an unused pinned view.'),{status:429});
     leases.set(key,{raw,expires:Date.now()+120000});return {capture:raw.id,frame:raw.frame,context:contextOf(raw,bridge.workspace),lease:key,expires:Date.now()+120000};
   }
-  const binary=(res,raw)=>{const s=decoded(raw),image=new AtlasRenderer().render(s),bytes=pack(image,{omitRasterRGBA:true,atlasEncoder:new AtlasEncoder()});res.writeHead(200,{'Content-Type':'application/octet-stream','Cache-Control':'no-store'});res.end(bytes);};
+  const binary=(res,raw)=>{const s=decoded(raw),image=new AtlasRenderer().render(s),bytes=pack(image,{omitRasterRGBA:true,omitCatalog:true,atlasEncoder:new AtlasEncoder()});res.writeHead(200,{'Content-Type':'application/octet-stream','Cache-Control':'no-store'});res.end(bytes);};
+  function catalogCapture(id) {
+    const raw = typeof id === 'string' && retained(id);
+    if (!raw) throw Object.assign(Error('The catalog capture expired. Pin the displayed frame or pick a new match.'), {status: 409});
+    return decoded(raw);
+  }
   async function pausedCapture(state){
     const sequence=state.capture_sequence;
     if(!sequence)throw Object.assign(Error('The native bridge has no acknowledged completed capture yet.'),{status:503,code:'capture_unavailable'});
@@ -63,14 +70,17 @@ export function createServer(dir,options={}) {
       ||![80,128].includes(s.vsram.length)||s.rgb.length!==s.width*s.height*3)throw Error('Invalid native snapshot');
     if(s.raster&&(s.raster.width!==s.width||s.raster.height!==s.height||JSON.stringify(s.raster.layers)!==JSON.stringify(['sprites','a','b','window','source'])))throw Error('Invalid raster layout');
     if(s.raster?.valid&&(s.raster_rgba?.length!==s.width*s.height*20||s.raster_samples?.length!==s.width*s.height*4||s.raster_flags?.length!==s.width*s.height))throw Error('Invalid captured raster lengths');
+    validateCatalogCapture(s);
     const producerId=s.id.slice(0,s.id.lastIndexOf('-'));
     if(producerId===previousProducer&&s.frame>previousFrame)counters.native_gaps+=s.frame-previousFrame-1;
     previousProducer=producerId;previousFrame=s.frame;counters.received_bytes+=packet.byteLength;
     streamed=s;live=packet;history.set(s.id,s);if(history.size>16)history.delete(history.keys().next().value);
     watch.ingest(s);for(const waiter of captureWaiters)waiter(s);
     counters.ingested++;counters.frame=s.frame;counters.last_received=Date.now();
+    counters.catalog_bytes=s.catalog_runs?.length||0;
+    counters.catalog_dropped_samples=s.catalog?.dropped_samples||0;
     if(Array.from(wss.clients).some(c=>!c.paused)){
-      const image=atlas.render(s),combined=pack(image,{omitRasterRGBA:true,atlasEncoder});counters.atlases++;counters.atlas_render_ms=image.atlas.render_ms;counters.last_packet_bytes=combined.byteLength;
+      const image=atlas.render(s),combined=pack(image,{omitRasterRGBA:true,omitCatalog:true,atlasEncoder});counters.atlases++;counters.atlas_render_ms=image.atlas.render_ms;counters.last_packet_bytes=combined.byteLength;
       for(const client of wss.clients){
         if(client.readyState!==WebSocket.OPEN||client.paused)continue;
         sendAtlas(client,combined);
@@ -120,13 +130,21 @@ export function createServer(dir,options={}) {
       if (!/^127\.0\.0\.1:\d+$/.test(req.headers.host || '')) return send(403,{error:'Use 127.0.0.1'});
       const u = new URL(req.url,'http://127.0.0.1');
       if(req.method==='POST'){
-        if(!['/api/movie','/api/comments','/api/control','/api/evidence/pin','/api/evidence/release','/api/watch'].includes(u.pathname)&&!/^\/api\/comments\/[^/]+$/.test(u.pathname))return send(405,{error:'Read-only endpoint'});
+        if(!['/api/movie','/api/comments','/api/control','/api/evidence/pin','/api/evidence/release','/api/watch','/api/catalog','/api/catalog/pick','/api/catalog/observe'].includes(u.pathname)&&!/^\/api\/comments\/[^/]+$/.test(u.pathname))return send(405,{error:'Read-only endpoint'});
         if(req.headers.origin!==`http://${req.headers.host}`||!/^application\/json(?:;|$)/i.test(req.headers['content-type']||''))return send(403,{error:'Same-origin JSON request required'});
         let text='';for await(const chunk of req){text+=chunk;if(Buffer.byteLength(text)>131072)throw Object.assign(Error('Request too large'),{status:413});}
         const body=JSON.parse(text),notePath=u.pathname.match(/^\/api\/comments\/([^/]+)$/);
         if(u.pathname==='/api/evidence/pin')return send(200,pin(retained(body.capture),body.owner,body.purpose));
         if(u.pathname==='/api/evidence/release'){if(!/^[a-zA-Z0-9-]{1,64}$/.test(body.owner||''))throw Error('Invalid lease owner');for(const key of leases.keys())if(key.startsWith(body.owner+':')&&(!body.purpose||key.endsWith(':'+body.purpose)))leases.delete(key);return send(200,{released:true});}
         if(u.pathname==='/api/watch')return send(200,body.action==='stop'?watch.stop():watch.start(body));
+        if(u.pathname==='/api/catalog')return send(200,await catalogs.write(catalogCapture(body.capture),body));
+        if(u.pathname==='/api/catalog/pick')return send(200,pickCatalog(catalogCapture(body.capture),body.selection));
+        if(u.pathname==='/api/catalog/observe'){
+          const s=catalogCapture(body.capture),entry=await catalogs.entry(s,body.entry,body.revision);
+          const {result,image}=observeCatalog(s,entry,{instance:body.instance,follow:body.follow,point:body.point});
+          if(body.owner && image)pin(s,body.owner,'catalog');
+          return send(200,{...result,image:image?.toString('base64')||null});
+        }
         if(u.pathname==='/api/control'){
           const state=await bridge.control(body);
           if(body.action==='pause_capture'){
@@ -137,7 +155,13 @@ export function createServer(dir,options={}) {
         if(u.pathname==='/api/movie')return send(200,await movies.control(body));
         if(u.pathname==='/api/comments'){
           const raw=retained(body.snapshot);
-          return send(201,await movies.annotate(raw,body));
+          let attachment;
+          if(body.catalog){
+            const s=catalogCapture(body.snapshot);
+            const entry=await catalogs.entry(s,body.catalog.entry,body.catalog.revision);
+            attachment=catalogAttachment(s,entry,body.catalog.instance);
+          }
+          return send(201,await movies.annotate(raw,body,attachment));
         }
         if(notePath)return send(200,await movies.updateNote(notePath[1],body));
         return send(405,{error:'Unknown write endpoint'});
@@ -146,6 +170,7 @@ export function createServer(dir,options={}) {
       if(u.pathname==='/api/session')return send(200,await bridge.describe({producer:!!producer,latest:streamed||cached,metrics:counters}));
       if(u.pathname==='/api/checkpoints')return send(200,await bridge.checkpoints());
       if(u.pathname==='/api/watch')return send(200,watch.status());
+      if(u.pathname==='/api/catalog')return send(200,await catalogs.read(catalogRom(catalogCapture(u.searchParams.get('capture')))));
       if(u.pathname==='/api/evidence'){
         const note=u.searchParams.get('note');let raw;
         if(note){raw=await movies.savedSnapshot(note);raw.evidence_context=contextOf(raw,bridge.workspace);pinned.set(raw.id,raw);if(pinned.size>16)pinned.delete(pinned.keys().next().value);}
@@ -159,7 +184,8 @@ export function createServer(dir,options={}) {
       if(u.pathname==='/api/comments')return send(200,await movies.comments());
       const artifact=u.pathname.match(/^\/api\/comments\/([^/]+)\/([^/]+)$/),movieExport=u.pathname.match(/^\/api\/movies\/([^/]+)\/export$/);
       if(artifact||movieExport){
-        const file=artifact?.[2]||'movie.zip',bytes=artifact?await movies.artifact(artifact[1],file):await movies.exportMovie(movieExport[1]);
+        const file=artifact?.[2]==='export'?'comment.zip':artifact?.[2]||'movie.zip';
+        const bytes=movieExport?await movies.exportMovie(movieExport[1]):file==='comment.zip'?await movies.exportNote(artifact[1]):await movies.artifact(artifact[1],file);
         res.writeHead(200,{'Content-Type':file.endsWith('.png')?'image/png':file.endsWith('.gz')?'application/gzip':file.endsWith('.zip')?'application/zip':file.endsWith('.json')?'application/json':'text/markdown; charset=utf-8',
           'Cache-Control':'no-store','Content-Disposition':`${file.endsWith('.png')?'inline':'attachment'}; filename="${file}"`,'X-Content-Type-Options':'nosniff'});return res.end(bytes);
       }
@@ -213,7 +239,7 @@ export function createServer(dir,options={}) {
         }
         return send(404,{error:'Unknown endpoint'});
       }
-      const files = {'/':'index.html','/app.mjs':'app.mjs','/decoder.mjs':'decoder.mjs','/renderer.mjs':'renderer.mjs','/transport.mjs':'transport.mjs','/presenter.mjs':'presenter.mjs','/cadence.mjs':'cadence.mjs','/rle.mjs':'rle.mjs','/style.css':'style.css','/movie-ui.mjs':'movie-ui.mjs','/note-model.mjs':'note-model.mjs'};
+      const files = {'/':'index.html','/app.mjs':'app.mjs','/decoder.mjs':'decoder.mjs','/renderer.mjs':'renderer.mjs','/transport.mjs':'transport.mjs','/presenter.mjs':'presenter.mjs','/cadence.mjs':'cadence.mjs','/rle.mjs':'rle.mjs','/style.css':'style.css','/movie-ui.mjs':'movie-ui.mjs','/note-model.mjs':'note-model.mjs','/catalog-ui.mjs':'catalog-ui.mjs'};
       const file = files[u.pathname]||(/^\/vendor\/[a-zA-Z0-9_.-]+\.(?:js|mjs)$/.test(u.pathname)?u.pathname.slice(1):null);
       if (!file) return send(404,{error:'Not found'});
       res.writeHead(200,{'Content-Type':file.endsWith('.html')?'text/html':file.endsWith('.css')?'text/css':'text/javascript',
@@ -226,7 +252,7 @@ export function createServer(dir,options={}) {
     wss.handleUpgrade(req,socket,head,ws=>{
       ws.on('error',()=>{});
       ws.on('message',message=>{try{const m=JSON.parse(message);if(m.type==='metrics')ws.metrics={...m,received:Date.now()};if(m.type==='pause')ws.paused=!!m.paused;}catch{}});
-      if(streamed)sendAtlas(ws,pack(atlas.render(streamed),{omitRasterRGBA:true,atlasEncoder}));
+      if(streamed)sendAtlas(ws,pack(atlas.render(streamed),{omitRasterRGBA:true,omitCatalog:true,atlasEncoder}));
     });
   });
   server.listenStream=port=>new Promise((resolve,reject)=>{

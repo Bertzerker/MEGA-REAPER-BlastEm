@@ -30,7 +30,7 @@ export function movieUI({capture,pinDisplayed,openSaved,owner,drawer,onSession,o
     try{
       const result=await api(movie?'/api/movie':'/api/control',{action,...extra});
       if(sequence!==commandSequence)return;
-      if(action==='pause_capture'){await onCaptured(result.capture.capture);await commentDisplayed(true);}
+      if(action==='pause_capture'){await onCaptured(result.capture.capture);await commentDisplayed(capture());}
       if(['record','stop','replay','checkpoint_save','checkpoint_restore'].includes(action))await library(action==='record'?result.id:undefined);
       $('movie-message').textContent=`${action.replaceAll('_',' ')} completed.`;
     }catch(e){error(e);if(e.code==='command_timeout'||e.name==='TimeoutError')$('movie-message').textContent+=' Command outcome is unknown; the state is being rechecked. No action was retried.';}
@@ -69,9 +69,12 @@ export function movieUI({capture,pinDisplayed,openSaved,owner,drawer,onSession,o
   }
   function edit(note,{recover=true}={}){
     model.open(note,{recover});drawer('comments-drawer');$('comment-editor').hidden=false;fields();
-    $('comment-capture').textContent=`${note.movie?'Movie '+note.movie+' · movie frame '+note.movie_frame:'Session observation'} · emulator frame ${note.emulator_frame} · capture ${note.capture}`;
+    $('comment-capture').textContent=`${note.movie?'Movie '+note.movie+' · movie frame '+note.movie_frame:'Session observation'} · emulator frame ${note.emulator_frame} · capture ${note.capture}`
+      +(note.catalog?` · ${note.catalog.label} · catalog revision ${note.catalog.revision}`:'');
     $('comment-render').src=`/api/comments/${note.id}/render.png`;
-    $('comment-files').replaceChildren(...['note.md','note.json','atlas.png','snapshot.json.gz'].map(file=>{const a=document.createElement('a');a.href=`/api/comments/${note.id}/${file}`;a.textContent=file;a.download=file;return a;}));$('comment-preview').replaceChildren();
+    const files=['note.md','note.json','atlas.png','snapshot.json.gz'];
+    if(note.catalog)files.push('catalog.json','isolation.png','export');
+    $('comment-files').replaceChildren(...files.map(file=>{const a=document.createElement('a');a.href=`/api/comments/${note.id}/${file}`;a.textContent=file==='export'?'Comment evidence ZIP':file;a.download=file==='export'?'comment.zip':file;return a;}));$('comment-preview').replaceChildren();
   }
   async function save(){
     if(!model?.base)return;
@@ -79,9 +82,9 @@ export function movieUI({capture,pinDisplayed,openSaved,owner,drawer,onSession,o
     try{await model.save((id,body)=>api('/api/comments/'+id,body));await library();statusDraft();$('movie-message').textContent=`Comment saved at revision ${model.revision}.`;return true;}
     finally{$('comment-save').disabled=false;statusDraft();}
   }
-  async function commentDisplayed(alreadyPinned=false){
-    const s=alreadyPinned?capture():await pinDisplayed();if(!s)throw Error('No captured frame is displayed');
-    const note=await api('/api/comments',{snapshot:s.id,title:'Frame '+s.frame,markdown:''});
+  async function commentDisplayed(pinned,catalog){
+    const s=pinned||await pinDisplayed();if(!s)throw Error('No captured frame is displayed');
+    const note=await api('/api/comments',{snapshot:s.id,title:'Frame '+s.frame,markdown:'',catalog});
     await library(note.movie||'');edit(note);$('comment-title').focus();
   }
   $('movie-record').onclick=()=>guard(()=>command('record',{title:$('movie-title').value},true));
@@ -99,7 +102,10 @@ export function movieUI({capture,pinDisplayed,openSaved,owner,drawer,onSession,o
   $('comment-recover').onclick=()=>guard(()=>{model.restore(foreignDraft.key);fields();});
   $('comment-use-server').onclick=()=>{const latest=model.latest;if(latest)guard(()=>{model.discard();edit(latest,{recover:false});});};
   $('comment-rebase').onclick=()=>{try{model.rebase();statusDraft();}catch(e){error(e);}};
-  $('comment-inspect').onclick=()=>{if(model?.base)openSaved(model.base).catch(error);};
+  $('comment-inspect').onclick=()=>{
+    const note=model?.base;
+    if(note)openSaved(note).then(()=>{if(note.catalog)drawer('catalog-drawer');}).catch(error);
+  };
   $('comment-preview-button').onclick=async()=>{try{preview??=(await import('/vendor/notes.js')).preview;await preview($('comment-preview'),$('comment-text').value);}catch(e){error(e);}};
   function insert(text){const editor=$('comment-text');editor.setRangeText(text,editor.selectionStart,editor.selectionEnd,'end');editor.dispatchEvent(new Event('input'));editor.focus();}
   $('comment-json').onclick=()=>insert('\n```json\n{\n  "address": "0xFF0000",\n  "observation": ""\n}\n```\n');
@@ -128,5 +134,7 @@ export function movieUI({capture,pinDisplayed,openSaved,owner,drawer,onSession,o
     }finally{polling=false;}
   }
   poll().then(()=>library()).catch(error);setInterval(poll,750);
-  return {state:()=>state};
+  return {state:()=>state,commentCatalog:(prepare,attachment)=>guard(async()=>{
+    try{await commentDisplayed(await prepare(),attachment);}catch(e){drawer('comments-drawer');error(e);}
+  })};
 }

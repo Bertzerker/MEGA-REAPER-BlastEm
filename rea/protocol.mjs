@@ -1,12 +1,12 @@
 import {fields,extraFields,unpack} from './public/transport.mjs';
 export {unpack};
-export function pack(s,{omitRasterRGBA=false,atlasEncoder}={}){
+export function pack(s,{omitRasterRGBA=false,omitCatalog=false,atlasEncoder}={}){
   const metadata={...s},parts=fields.map(key=>{const b=s[key];delete metadata[key];return Buffer.from(b.buffer,b.byteOffset,b.byteLength);});
   delete metadata.atlasPixels;
   const extra=[];
   for(const key of extraFields){
     delete metadata[key];const bytes=s[key];
-    if(bytes&&!(omitRasterRGBA&&key==='raster_rgba')){extra.push({name:key,length:bytes.byteLength});parts.push(Buffer.from(bytes.buffer,bytes.byteOffset,bytes.byteLength));}
+    if(bytes&&!(omitRasterRGBA&&key==='raster_rgba')&&!(omitCatalog&&key==='catalog_runs')){extra.push({name:key,length:bytes.byteLength});parts.push(Buffer.from(bytes.buffer,bytes.byteOffset,bytes.byteLength));}
   }
   const encoded=s.atlasPixels&&atlasEncoder?.encode(s.atlasPixels);
   const pixels=encoded||s.atlasPixels;

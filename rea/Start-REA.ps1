@@ -1,5 +1,5 @@
 param([Parameter(Mandatory=$true)][string]$Rom, [ValidateRange(1,65533)][int]$Port=8765,
-    [ValidateRange(1,60)][int]$CaptureEvery=1, [switch]$NativeWindow)
+    [ValidateRange(1,60)][int]$CaptureEvery=1, [switch]$NativeWindow, [switch]$NoCatalogCapture)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 $romPath = (Resolve-Path -LiteralPath $Rom).Path
@@ -25,6 +25,7 @@ if ($runningEmulators.Count) { throw "BlastEm is already running (PID $($running
 $env:BLASTEM_REA_DIR = Join-Path $PSScriptRoot 'session'
 $env:PORT = "$Port"
 $env:BLASTEM_REA_CAPTURE_EVERY = "$CaptureEvery"
+$env:BLASTEM_REA_CATALOG = if ($NoCatalogCapture) { '0' } else { '1' }
 $env:BLASTEM_REA_STREAM_PORT = "$($Port+1)"
 $env:BLASTEM_REA_CONTROL_PORT = "$($Port+2)"
 $env:BLASTEM_REA_BROWSER_ONLY = if ($NativeWindow) { '0' } else { '1' }

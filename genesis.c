@@ -24,6 +24,7 @@
 #include "event_log.h"
 #include "paths.h"
 #include "kit_prof.h"
+#include "rea_raster.h"
 #define MCLKS_NTSC 53693175
 #define MCLKS_PAL  53203395
 
@@ -2083,6 +2084,7 @@ static uint8_t load_state(system_header *system, uint8_t slot)
 		strcpy(statepath + strlen(statepath)-strlen("state"), "gst");
 		pc = load_gst(gen, statepath);
 		ret = pc != 0;
+		if (ret) rea_catalog_discontinuity(gen->vdp);
 	}
 	if (ret) {
 		debug_message("Loaded state from %s\n", statepath);
@@ -2098,6 +2100,7 @@ static void handle_reset_requests(genesis_context *gen)
 	{
 		if (gen->reset_requested) {
 			gen->reset_requested = 0;
+			rea_catalog_discontinuity(gen->vdp);
 			gen->m68k->should_return = 0;
 			if (gen->header.type == SYSTEM_GENESIS) {
 				z80_assert_reset(gen->z80, gen->m68k->cycles);

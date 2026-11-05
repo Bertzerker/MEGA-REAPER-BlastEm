@@ -549,6 +549,7 @@ vdp_context *init_vdp_context(uint8_t region_pal, uint8_t has_max_vsram, uint8_t
 
 void vdp_free(vdp_context *context)
 {
+	if (context->rea_raster) free(context->rea_raster->catalog);
 	free(context->rea_raster);
 	if (headless) {
 		free(context->fb);
@@ -589,6 +590,11 @@ static void increment_address(vdp_context *context)
 	}
 }
 
+static inline rea_catalog *catalog_observer(vdp_context *context)
+{
+	return context->rea_raster ? context->rea_raster->catalog : NULL;
+}
+
 static void render_sprite_cells(vdp_context * context)
 {
 	if (context->cur_slot < 0) {
@@ -616,6 +622,11 @@ static void render_sprite_cells(vdp_context * context)
 		context->flags |= FLAG_CAN_MASK;
 		if (!(context->flags & FLAG_MASKED)) {
 			x -= 128;
+			rea_catalog *catalog = catalog_observer(context);
+			uint64_t key = 0;
+			if (catalog && catalog->draw[context->cur_slot]) {
+				key = (catalog->draw[context->cur_slot] & ~0x7FFull) | (address >> 5);
+			}
 			//printf("Draw Slot %d of %d, Rendering sprite cell from %X to x: %d\n", context->cur_slot, context->sprite_draws, d->address, x);
 			uint8_t collide = 0;
 			if (x >= 8 && x < 312) {
@@ -624,6 +635,7 @@ static void render_sprite_cells(vdp_context * context)
 					uint8_t pixel = context->vdpmem[address] >> 4;
 					if (!(context->linebuf[x] & 0xF)) {
 						context->linebuf[x] = pixel | d->pal_priority;
+						if (catalog && pixel) catalog->sprite[x] = key;
 					} else {
 						collide |= pixel;
 					}
@@ -631,6 +643,7 @@ static void render_sprite_cells(vdp_context * context)
 					pixel = context->vdpmem[address] & 0xF;
 					if (!(context->linebuf[x] & 0xF)) {
 						context->linebuf[x] = pixel  | d->pal_priority;
+						if (catalog && pixel) catalog->sprite[x] = key;
 					} else {
 						collide |= pixel;
 					}
@@ -643,6 +656,7 @@ static void render_sprite_cells(vdp_context * context)
 						uint8_t pixel = context->vdpmem[address] >> 4;
 						if (!(context->linebuf[x] & 0xF)) {
 							context->linebuf[x] = pixel | d->pal_priority;
+							if (catalog && pixel) catalog->sprite[x] = key;
 						} else {
 							collide |= pixel;
 						}
@@ -652,6 +666,7 @@ static void render_sprite_cells(vdp_context * context)
 						uint8_t pixel = context->vdpmem[address] & 0xF;
 						if (!(context->linebuf[x] & 0xF)) {
 							context->linebuf[x] = pixel  | d->pal_priority;
+							if (catalog && pixel) catalog->sprite[x] = key;
 						} else {
 							collide |= pixel;
 						}
@@ -976,6 +991,11 @@ static void scan_sprite_table(uint32_t line, vdp_context * context)
 			}
 			//printf("Sprite %d at y: %d with height %d is on line %d\n", context->sprite_index, y, height, line);
 			context->sprite_info_list[context->slot_counter].size = context->sat_cache[address+2];
+			rea_catalog *catalog = catalog_observer(context);
+			if (catalog) {
+				catalog->links[context->slot_counter] = context->sat_cache[address+3] & 0x7F;
+				catalog->scan_valid[context->slot_counter] = 1;
+			}
 			context->sprite_info_list[context->slot_counter++].index = context->sprite_index;
 		}
 		context->sprite_index = context->sat_cache[address+3] & 0x7F;
@@ -997,6 +1017,11 @@ static void scan_sprite_table(uint32_t line, vdp_context * context)
 				}
 				//printf("Sprite %d at y: %d with height %d is on line %d\n", context->sprite_index, y, height, line);
 				context->sprite_info_list[context->slot_counter].size = context->sat_cache[address+2];
+				rea_catalog *catalog = catalog_observer(context);
+				if (catalog) {
+					catalog->links[context->slot_counter] = context->sat_cache[address+3] & 0x7F;
+					catalog->scan_valid[context->slot_counter] = 1;
+				}
 				context->sprite_info_list[context->slot_counter++].index = context->sprite_index;
 			}
 			context->sprite_index = context->sat_cache[address+3] & 0x7F;
@@ -1095,7 +1120,8 @@ static void read_sprite_x(uint32_t line, vdp_context * context)
 				ymask = 0x1FF;
 				ymin = 128;
 			}
-			uint8_t index = context->sprite_info_list[context->cur_slot].index;
+			uint8_t scan_index = context->sprite_info_list[context->cur_slot].index;
+			uint8_t index = scan_index;
 			if (!(context->regs[REG_MODE_4] & BIT_H40)) {
 				index &= MAX_SPRITES_FRAME_H32 - 1;
 			}
@@ -1119,6 +1145,9 @@ static void read_sprite_x(uint32_t line, vdp_context * context)
 				address = ((tileinfo & 0x7FF) << 5) + row * 4;
 			}
 			context->sprite_draws--;
+			rea_catalog *catalog = catalog_observer(context);
+			if (catalog) catalog->draw[context->sprite_draws] = catalog->scan_valid[context->cur_slot]
+				? rea_catalog_key(tileinfo, att_addr - 4, scan_index, catalog->links[context->cur_slot]) : 0;
 			context->sprite_draw_list[context->sprite_draws].x_pos = ((context->vdpmem[att_addr+ 2] & 0x3) << 8 | context->vdpmem[att_addr + 3]) & 0x1FF;
 			context->sprite_draw_list[context->sprite_draws].address = address;
 			context->sprite_draw_list[context->sprite_draws].pal_priority = pal_priority;
@@ -1444,9 +1473,18 @@ static void read_map_scroll(uint16_t column, uint16_t vsram_off, uint32_t line, 
 			}
 			offset = address + line_offset + (((column - 2) * 2) & mask);
 			context->col_1 = (context->vdpmem[offset] << 8) | context->vdpmem[offset+1];
+			rea_catalog *catalog = catalog_observer(context);
+			if (catalog) {
+				catalog->name[0] = offset;
+				catalog->name_valid |= 1;
+			}
 			//printf("Window | top: %d, bot: %d, left: %d, right: %d, base: %X, line: %X offset: %X, tile: %X, reg: %X\n", top_line, bottom_line, left_col, right_col, address, line_offset, offset, ((context->col_1 & 0x3FF) << 5), context->regs[REG_WINDOW]);
 			offset = address + line_offset + (((column - 1) * 2) & mask);
 			context->col_2 = (context->vdpmem[offset] << 8) | context->vdpmem[offset+1];
+			if (catalog) {
+				catalog->name[1] = offset;
+				catalog->name_valid |= 2;
+			}
 			context->v_offset = (line) & v_offset_mask;
 			context->flags |= FLAG_WINDOW;
 			return;
@@ -1478,6 +1516,11 @@ static void read_map_scroll(uint16_t column, uint16_t vsram_off, uint32_t line, 
 		offset = address + (((vscroll << v_shift) + hscroll*2) & 0x1FFF);
 		//printf("%s | line: %d, col: %d, x: %d, hs_mask %X, scr reg: %X, tbl addr: %X\n", (vsram_off ? "B" : "A"), line, (column-2+i), hscroll, hscroll_mask, context->regs[REG_SCROLL], offset);
 		uint16_t col_val = (context->vdpmem[offset] << 8) | context->vdpmem[offset+1];
+		rea_catalog *catalog = catalog_observer(context);
+		if (catalog) {
+			catalog->name[i] = offset;
+			catalog->name_valid |= 1 << i;
+		}
 		if (i) {
 			context->col_2 = col_val;
 		} else {
@@ -1517,7 +1560,7 @@ static void read_map_mode4(uint16_t column, uint32_t line, vdp_context * context
 	context->col_1 = (context->vdpmem[address] << 8) | context->vdpmem[address+1];
 }
 
-static void render_map(uint16_t col, uint8_t * tmp_buf, uint8_t offset, vdp_context * context)
+static void render_map(uint16_t col, uint8_t * tmp_buf, uint8_t offset, vdp_context * context, unsigned column)
 {
 	uint16_t address;
 	uint16_t vflip_base;
@@ -1535,6 +1578,13 @@ static void render_map(uint16_t col, uint8_t * tmp_buf, uint8_t offset, vdp_cont
 	}
 	uint8_t pal_priority = (col >> 9) & 0x70;
 	uint32_t bits = *((uint32_t *)(&context->vdpmem[address]));
+	rea_catalog *catalog = catalog_observer(context);
+	if (catalog) {
+		uint64_t key = catalog->name_valid & (1 << column)
+			? rea_catalog_key(col, catalog->name[column], 0, context->v_offset & 7) : 0;
+		uint64_t *source = catalog->scroll[tmp_buf == context->tmp_buf_b];
+		for (unsigned i = 0; i < 8; i++) source[(offset + i) & SCROLL_BUFFER_MASK] = key;
+	}
 	tmp_buf += offset & SCROLL_BUFFER_MASK;
 	if (col & MAP_BIT_H_FLIP) {
 		uint32_t shift = 28;
@@ -1560,17 +1610,17 @@ static void render_map(uint16_t col, uint8_t * tmp_buf, uint8_t offset, vdp_cont
 
 static void render_map_1(vdp_context * context)
 {
-	render_map(context->col_1, context->tmp_buf_a, context->buf_a_off, context);
+	render_map(context->col_1, context->tmp_buf_a, context->buf_a_off, context, 0);
 }
 
 static void render_map_2(vdp_context * context)
 {
-	render_map(context->col_2, context->tmp_buf_a, context->buf_a_off+8, context);
+	render_map(context->col_2, context->tmp_buf_a, context->buf_a_off+8, context, 1);
 }
 
 static void render_map_3(vdp_context * context)
 {
-	render_map(context->col_1, context->tmp_buf_b, context->buf_b_off, context);
+	render_map(context->col_1, context->tmp_buf_b, context->buf_b_off, context, 0);
 }
 
 static void fetch_map_mode4(uint16_t col, uint32_t line, vdp_context *context)
@@ -1652,8 +1702,25 @@ static sh_pixel composite_highlight(vdp_context *context, uint8_t *debug_dst, ui
 	return (sh_pixel){.index = pixel, .intensity = intensity};
 }
 
+static inline void catalog_composite(vdp_context *context, rea_catalog *catalog, uint8_t *debug_dst,
+	uint8_t *sprite, uint8_t *a, unsigned b)
+{
+	unsigned x = debug_dst - context->layer_debug_buf;
+	unsigned window = (context->flags & FLAG_WINDOW) != 0;
+	unsigned a_index = a - context->tmp_buf_a;
+	uint64_t a_key = catalog->scroll[0][a_index];
+	uint64_t b_key = catalog->scroll[1][b];
+	if (a_key) a_key |= (uint64_t)((x - a_index) & 7) << 32;
+	if (b_key) b_key |= (uint64_t)((x - b) & 7) << 32;
+	catalog->inputs[REA_SPRITES][x] = catalog->sprite[sprite - context->linebuf];
+	catalog->inputs[REA_A][x] = window ? 0 : a_key;
+	catalog->inputs[REA_WINDOW][x] = window ? a_key : 0;
+	catalog->inputs[REA_B][x] = b_key;
+}
+
 static void render_normal(vdp_context *context, int32_t col, uint8_t *dst, uint8_t *debug_dst, uint8_t *buf_a, int plane_a_off, int plane_a_mask, int plane_b_off)
 {
+	rea_catalog *catalog = catalog_observer(context);
 	uint8_t *sprite_buf = context->linebuf + col * 8;
 	if (!col && (context->regs[REG_MODE_1] & BIT_COL0_MASK)) {
 		memset(dst, 0, 8);
@@ -1668,6 +1735,8 @@ static void render_normal(vdp_context *context, int32_t col, uint8_t *dst, uint8
 			uint8_t sprite, plane_a, plane_b;
 			plane_a = buf_a[plane_a_off & plane_a_mask];
 			plane_b = context->tmp_buf_b[plane_b_off & SCROLL_BUFFER_MASK];
+			if (catalog) catalog_composite(context, catalog, debug_dst, sprite_buf,
+				buf_a + (plane_a_off & plane_a_mask), plane_b_off & SCROLL_BUFFER_MASK);
 			*(dst++) = composite_normal(context, debug_dst, *sprite_buf, plane_a, plane_b, context->regs[REG_BG_COLOR]) & 0x3F;
 			debug_dst++;
 		}
@@ -1677,6 +1746,8 @@ static void render_normal(vdp_context *context, int32_t col, uint8_t *dst, uint8
 			uint8_t sprite, plane_a, plane_b;
 			plane_a = buf_a[plane_a_off & plane_a_mask];
 			plane_b = context->tmp_buf_b[plane_b_off & SCROLL_BUFFER_MASK];
+			if (catalog) catalog_composite(context, catalog, debug_dst, sprite_buf,
+				buf_a + (plane_a_off & plane_a_mask), plane_b_off & SCROLL_BUFFER_MASK);
 			*(dst++) = composite_normal(context, debug_dst, *sprite_buf, plane_a, plane_b, context->regs[REG_BG_COLOR]) & 0x3F;
 			debug_dst++;
 		}
@@ -1685,6 +1756,7 @@ static void render_normal(vdp_context *context, int32_t col, uint8_t *dst, uint8
 
 static void render_highlight(vdp_context *context, int32_t col, uint8_t *dst, uint8_t *debug_dst, uint8_t *buf_a, int plane_a_off, int plane_a_mask, int plane_b_off)
 {
+	rea_catalog *catalog = catalog_observer(context);
 	int start = 0;
 	if (!col && (context->regs[REG_MODE_1] & BIT_COL0_MASK)) {
 		memset(dst, SHADOW_OFFSET + (context->regs[REG_BG_COLOR] & 0x3F), 8);
@@ -1700,6 +1772,8 @@ static void render_highlight(vdp_context *context, int32_t col, uint8_t *dst, ui
 		plane_a = buf_a[plane_a_off & plane_a_mask];
 		plane_b = context->tmp_buf_b[plane_b_off & SCROLL_BUFFER_MASK];
 		sprite = *sprite_buf;
+		if (catalog) catalog_composite(context, catalog, debug_dst, sprite_buf,
+			buf_a + (plane_a_off & plane_a_mask), plane_b_off & SCROLL_BUFFER_MASK);
 		sh_pixel pixel = composite_highlight(context, debug_dst, sprite, plane_a, plane_b, context->regs[REG_BG_COLOR]);
 		uint8_t final_pixel;
 		if (pixel.intensity == BUF_BIT_PRIORITY << 1) {
@@ -1916,7 +1990,11 @@ static void render_testreg_highlight(vdp_context *context, int32_t col, uint8_t 
 
 static void render_map_output(uint32_t line, int32_t col, vdp_context * context)
 {
-	if (!col && context->rea_raster) memset(context->rea_raster->inputs, 0, sizeof(context->rea_raster->inputs));
+	if (!col && context->rea_raster) {
+		memset(context->rea_raster->inputs, 0, sizeof(context->rea_raster->inputs));
+		rea_catalog *catalog = catalog_observer(context);
+		if (catalog) memset(catalog->inputs, 0, sizeof(catalog->inputs));
+	}
 	uint8_t *dst;
 	uint8_t *debug_dst;
 	uint8_t output_disabled = (context->test_regs[0] & TEST_BIT_DISABLE) != 0;
@@ -1937,7 +2015,7 @@ static void render_map_output(uint32_t line, int32_t col, vdp_context * context)
 		return;
 	}
 	line &= 0xFF;
-	render_map(context->col_2, context->tmp_buf_b, context->buf_b_off+8, context);
+	render_map(context->col_2, context->tmp_buf_b, context->buf_b_off+8, context, 1);
 	uint8_t *sprite_buf;
 	uint8_t sprite, plane_a, plane_b;
 	int plane_a_off, plane_b_off;
@@ -6626,6 +6704,7 @@ void vdp_deserialize(deserialize_buffer *buf, void *vcontext)
 {
 	vdp_context *context = vcontext;
 	rea_raster_clear(context);
+	rea_catalog_discontinuity(context);
 	uint8_t version = load_int8(buf);
 	uint8_t vramk;
 	if (version == 64) {

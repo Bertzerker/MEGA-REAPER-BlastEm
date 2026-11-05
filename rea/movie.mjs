@@ -85,7 +85,7 @@ export class MovieStore {
     for(const id of await readdir(root))if(uuid.test(id))try{notes.push(JSON.parse(await readFile(path.join(root,id,'note.json'),'utf8')));}catch{}
     return notes.sort((a,b)=>b.created.localeCompare(a.created));
   }
-  async annotate(snapshot,{title='',markdown=''}={}){
+  async annotate(snapshot,{title='',markdown='',classification='observed'}={},attachment){
     if(!snapshot)throw Object.assign(Error('Capture expired. Resume inspection and capture a new comment.'),{status:409});
     const s=typeof snapshot.ram==='string'?decode(snapshot):snapshot;
     const movie=s.movie?.id&&s.movie.mode!=='idle'?checkId(s.movie.id):null;
@@ -97,7 +97,24 @@ export class MovieStore {
     await Promise.all([writeFile(path.join(folder,'snapshot.json.gz'),snapshotBytes),writeFile(path.join(folder,'atlas.png'),atlasBytes),writeFile(path.join(folder,'render.png'),renderBytes)]);
     const note={schema:2,id,movie,movie_frame:movie?s.movie.frame:null,emulator_frame:s.frame,capture:s.id,context:s.evidence_context||null,created:new Date().toISOString(),width:s.width,height:s.height,
       evidence:{snapshot:{file:'snapshot.json.gz',sha256:hash(snapshotBytes)},atlas:{file:'atlas.png',sha256:hash(atlasBytes)},render:{file:'render.png',sha256:hash(renderBytes)}}};
-    return this.saveNote(folder,note,{title,markdown});
+    if(attachment){
+      let row=null;
+      if(movie){
+        try{row=(await this.inputRows(movie,s.movie.frame,1)).rows[0]||null;}
+        catch(error){if(error.code!=='ENOENT')throw error;}
+      }
+      const content={...attachment.content,snapshot_sha256:note.evidence.snapshot.sha256,
+        movie:movie?{id:movie,format:'RMTAS001',frame:s.movie.frame,input_row:s.movie.frame,
+          input_checksum:row?.checksum??null,recorded_pad_masks:row?[row.p1,row.p2]:null}:null};
+      const bytes=Buffer.from(JSON.stringify(content,null,2));
+      await Promise.all([writeFile(path.join(folder,'catalog.json'),bytes),writeFile(path.join(folder,'isolation.png'),attachment.image)]);
+      note.evidence.catalog={file:'catalog.json',sha256:hash(bytes)};
+      note.evidence.isolation={file:'isolation.png',sha256:hash(attachment.image)};
+      const entry=content.catalog;
+      note.catalog={id:entry.id,revision:entry.revision,label:entry.label,kind:entry.kind,
+        instance:content.observation.instance,evidence:content.observation.evidence};
+    }
+    return this.saveNote(folder,note,{title,markdown,classification});
   }
   async saveNote(folder,note,body){
     if(typeof body.markdown!=='string'||body.markdown.length>65536||typeof body.title!=='string'||body.title.length>200)throw Error('Note exceeds title/text limit');
@@ -105,7 +122,8 @@ export class MovieStore {
     const classification=body.classification||note.classification||'observed';
     if(!['observed','hypothesis'].includes(classification))throw Error('Unknown finding classification');
     const result={...note,revision:(note.revision||0)+1,classification,title:body.title,markdown:body.markdown,updated:new Date().toISOString()};
-    const doc=`# ${body.title.replace(/[\r\n]/g,' ')}\n\nMovie: ${note.movie} · movie frame: ${note.movie_frame} · emulator frame: ${note.emulator_frame}\n\nCapture: ${note.capture}\n\n![Captured render](render.png)\n\n![Six-view atlas](atlas.png)\n\n[Render and memory snapshot](snapshot.json.gz)\n\n${body.markdown}\n`;
+    const catalog=note.catalog?'[Captured catalog definition and observation](catalog.json)\n\n![Captured isolation](isolation.png)\n\n':'';
+    const doc=`# ${body.title.replace(/[\r\n]/g,' ')}\n\nMovie: ${note.movie} · movie frame: ${note.movie_frame} · emulator frame: ${note.emulator_frame}\n\nCapture: ${note.capture}\n\n![Captured render](render.png)\n\n![Six-view atlas](atlas.png)\n\n[Render and memory snapshot](snapshot.json.gz)\n\n${catalog}${body.markdown}\n`;
     await atomic(path.join(folder,'note.md'),doc);await atomic(path.join(folder,'note.json'),JSON.stringify(result,null,2));return result;
   }
   async updateNote(id,body){
@@ -123,7 +141,16 @@ export class MovieStore {
     if(hash(bytes)!==note.evidence.snapshot.sha256)throw Object.assign(Error('Saved evidence failed its SHA-256 integrity check.'),{status:422});
     const raw=JSON.parse(gunzipSync(bytes,{maxOutputLength:32*1024*1024}));
     if(raw.id!==note.capture||raw.frame!==note.emulator_frame)throw Error('Saved note and capture identities differ');
-    return {...decode(raw),archive:{note:id,title:note.title},evidence_context:note.context||raw.evidence_context};
+    if(note.catalog){
+      const [catalog]=await Promise.all([this.artifact(id,'catalog.json'),this.artifact(id,'isolation.png')]);
+      const evidence=JSON.parse(catalog.toString());
+      if(evidence.observation.capture!==note.capture||evidence.snapshot_sha256!==note.evidence.snapshot.sha256
+          || evidence.catalog.id!==note.catalog.id||evidence.catalog.revision!==note.catalog.revision
+          || hash(JSON.stringify(evidence.catalog))!==evidence.definition_sha256){
+        throw Object.assign(Error('Catalog attachment does not match the saved capture and definition.'),{status:422});
+      }
+    }
+    return {...decode(raw),archive:{note:id,title:note.title,catalog:note.catalog},evidence_context:note.context||raw.evidence_context};
   }
   async inputRows(id,start=0,length=60){
     checkId(id);if(!Number.isInteger(start)||start<0||!Number.isInteger(length)||length<1||length>256)throw Error('Input rows require start >= 0 and length 1–256');
@@ -138,15 +165,33 @@ export class MovieStore {
     }finally{await file.close();}
   }
   async artifact(id,file){
-    checkId(id);if(!['note.json','note.md','atlas.png','render.png','snapshot.json.gz'].includes(file))throw Error('Unknown evidence file');
-    return readFile(path.join(this.dir,'comments',id,file));
+    checkId(id);if(!['note.json','note.md','atlas.png','render.png','snapshot.json.gz','catalog.json','isolation.png'].includes(file))throw Error('Unknown evidence file');
+    const bytes=await readFile(path.join(this.dir,'comments',id,file));
+    if(file==='catalog.json'||file==='isolation.png'){
+      const note=JSON.parse(await this.artifact(id,'note.json'));
+      const descriptor=note.evidence[file==='catalog.json'?'catalog':'isolation'];
+      if(descriptor?.file!==file||descriptor.sha256!==hash(bytes)){
+        throw Object.assign(Error('Catalog attachment failed its SHA-256 integrity check.'),{status:422});
+      }
+    }
+    return bytes;
+  }
+  async noteFiles(note,prefix=''){
+    const names=['note.json','note.md','atlas.png','render.png','snapshot.json.gz'];
+    if(note.catalog)names.push('catalog.json','isolation.png');
+    return Promise.all(names.map(async file=>[prefix+file,await this.artifact(note.id,file)]));
+  }
+  async exportNote(id){
+    const note=JSON.parse(await this.artifact(id,'note.json'));
+    if(note.id!==id)throw Error('Saved note identity differs');
+    return zip(await this.noteFiles(note));
   }
   async exportMovie(id){
     checkId(id);const status=await this.status();
     if(status.id===id&&status.mode==='recording')throw Error('Stop recording before exporting the movie');
     const folder=path.join(this.dir,'movies',id),files=[];
     for(const name of ['movie.json','inputs.rmt','start.state'])files.push([name,await readFile(path.join(folder,name))]);
-    for(const note of await this.comments())if(note.movie===id)for(const name of ['note.json','note.md','atlas.png','render.png','snapshot.json.gz'])files.push([`comments/${note.id}/${name}`,await this.artifact(note.id,name)]);
+    for(const note of await this.comments())if(note.movie===id)files.push(...await this.noteFiles(note,`comments/${note.id}/`));
     const header=files.find(([name])=>name==='inputs.rmt')[1];
     if(header.length<56||(header.length-56)%8||header.subarray(0,8).toString()!=='RMTAS001')throw Error('Invalid movie input log');
     files.push(['inputs.json',Buffer.from(JSON.stringify({schema:1,format:'RMTAS001',rom_sha1:header.subarray(8,28).toString('hex'),emulator_sha1:header.subarray(28,48).toString('hex'),

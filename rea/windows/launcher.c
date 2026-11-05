@@ -227,6 +227,8 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE previous,LPWSTR command,int sho
     StringCchPrintfW(value,PATH_CAP,L"%u",port+1);SetEnvironmentVariableW(L"BLASTEM_REA_STREAM_PORT",value);
     StringCchPrintfW(value,PATH_CAP,L"%u",port+2);SetEnvironmentVariableW(L"BLASTEM_REA_CONTROL_PORT",value);
     SetEnvironmentVariableW(L"BLASTEM_REA_CAPTURE_EVERY",L"1");SetEnvironmentVariableW(L"BLASTEM_REA_BROWSER_ONLY",native_window?L"0":L"1");
+    if(!GetEnvironmentVariableW(L"BLASTEM_REA_CATALOG",value,PATH_CAP))
+        SetEnvironmentVariableW(L"BLASTEM_REA_CATALOG",L"1");
     path(value,L"rea\\session");SetEnvironmentVariableW(L"BLASTEM_REA_DIR",value);
     StringCchPrintfW(url,128,L"http://127.0.0.1:%u/",port);
     SetProcessDPIAware();

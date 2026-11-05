@@ -4,6 +4,7 @@ import {AtlasPresenter} from './presenter.mjs';
 import {FramePacer} from './cadence.mjs';
 import {prepare,draw} from './renderer.mjs';
 import {movieUI,api} from './movie-ui.mjs';
+import {catalogUI} from './catalog-ui.mjs';
 const $=id=>document.getElementById(id),hex=(n,len=2)=>n.toString(16).toUpperCase().padStart(len,'0');
 const names={composite:'Composite · Captured output',sprites:'Sprites · Captured input',a:'Plane A · Captured input',b:'Plane B · Captured input',window:'Window · Captured input',source:'Source / priority · Captured evidence'};
 const owner=crypto.randomUUID(),article=document.createElement('article'),canvas=document.createElement('canvas'),labels=document.createElement('div');
@@ -42,6 +43,22 @@ async function pinDisplayed(){
   suspend(s.archive?'saved':'frozen');evidenceValid=false;evidenceStatus();
   try{await pinRaw(s);if(current===s){evidenceValid=true;evidenceStatus();}return s;}
   catch(e){if(current===s){evidenceMode='invalid';evidenceValid=false;message(e.message);evidenceStatus();}throw e;}
+}
+async function pinCatalogCapture(id){
+  if(current?.id===id)return pinDisplayed();
+  await pinRaw({id});
+  const response=await fetch('/api/evidence?capture='+encodeURIComponent(id));
+  if(!response.ok)throw Error((await response.json()).error);
+  const s=unpack(await response.arrayBuffer());
+  if(s.id!==id)throw Error('The returned capture does not match the catalog observation.');
+  selectedPixel=null;
+  $('selection').textContent='No pixel selected in this catalog capture.';
+  $('follow-pixel').checked=false;
+  suspend('frozen');
+  setCurrent(s,'frozen');
+  evidenceValid=true;
+  evidenceStatus();
+  return s;
 }
 function updateLabels(s){
   const signature=JSON.stringify(s.atlas.panels);if(signature===layoutSignature)return;layoutSignature=signature;
@@ -118,6 +135,8 @@ function onSession(next){
   if(next.machine.paused&&queue.length&&!held()){setCurrent(queue.at(-1),'live');queue=[];buffered=false;pacer.reset();}
 }
 const ui=movieUI({capture:()=>current,pinDisplayed,openSaved,owner,drawer,onSession,onCaptured:async id=>{const r=await fetch('/api/evidence?capture='+encodeURIComponent(id));if(!r.ok)throw Error((await r.json()).error);setCurrent(unpack(await r.arrayBuffer()),'frozen');await pinDisplayed();}});
+catalogUI({capture:()=>current,pixel:()=>selectedPixel,pinDisplayed,drawer,owner,
+  attach:(id,attachment)=>ui.commentCatalog(()=>pinCatalogCapture(id),attachment)});
 function connect(){
   socket=new WebSocket(`${location.protocol==='https:'?'wss':'ws'}://${location.host}/stream`);socket.binaryType='arraybuffer';
   socket.onopen=()=>{viewerConnected=true;queue=[];buffered=false;pacer.reset();socket.send(JSON.stringify({type:'pause',paused:held()}));if(held()&&current)pinRaw(current).then(()=>{evidenceValid=true;evidenceMode=current.archive?'saved':'frozen';evidenceStatus();}).catch(e=>{evidenceValid=false;evidenceMode='invalid';message(e.message);evidenceStatus();});};
