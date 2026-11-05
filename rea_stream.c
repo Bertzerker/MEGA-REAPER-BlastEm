@@ -116,6 +116,7 @@ static void u32le(uint8_t *p, uint32_t value)
 {
 	for (unsigned i=0; i<4; i++) p[i] = value >> (i*8);
 }
+void rea_stream_poll(void){if(stream!=REA_INVALID&&pending)flush_packet();}
 static uint8_t *copy_words(uint8_t *p, const uint16_t *src, unsigned count)
 {
 	for (unsigned i=0; i<count; i++) { *p++ = src[i] >> 8; *p++ = src[i]; }
@@ -125,7 +126,7 @@ void rea_stream_capture(vdp_context *v, unsigned width, unsigned height, uint64_
 {
 	if (!ready_stream() || !flush_packet()) return;
 	genesis_context *g = (genesis_context *)v->system;
-	char header[2048], extras[384];
+	char header[4096], extras[384];
 	rea_raster *r = v->rea_raster;
 	int raster_valid = r && !r->unsupported;
 	unsigned covered = 0, pixels = width * height;
@@ -189,5 +190,6 @@ void rea_stream_capture(vdp_context *v, unsigned width, unsigned height, uint64_
 		}
 	}
 	pending = (unsigned)(p-packet); u32le(packet, pending-4);
+	rea_movie_published(sequence,v->frame);
 	flush_packet();
 }

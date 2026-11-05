@@ -11,6 +11,7 @@ int rea_movie_input(unsigned port,unsigned button,int down){return 0;}
 const char *rea_movie_metadata(void){return "null";}
 int rea_movie_active(void){return 0;}
 void rea_movie_reset(void){}
+void rea_movie_published(uint64_t sequence,unsigned frame){}
 #else
 #include "blastem.h"
 #include "genesis.h"
@@ -21,6 +22,7 @@ void rea_movie_reset(void){}
 #include "hash.h"
 #include "config.h"
 #include "rea_raster.h"
+#include "rea_stream.h"
 #include "zlib/zlib.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -56,6 +58,9 @@ static char movie_id[65],pending[128],error_text[128];
 static const char *modes[]={"idle","recording","playback","ended"};
 static unsigned char rom_hash[20],build_hash[20];
 static int identified;
+static unsigned rom_generation,execution_generation,run_remaining,run_completed,run_total,last_capture_frame,run_p1,run_p2;
+static uint64_t last_capture_sequence;
+static unsigned char config_identity[20];
 static unsigned get32(const unsigned char *b){return b[0]|b[1]<<8|b[2]<<16|(unsigned)b[3]<<24;}
 static void put32(unsigned char *b,unsigned n){for(unsigned i=0;i<4;i++)b[i]=n>>(i*8);}
 static FILE *open_file(const char *name,const char *access)
@@ -83,7 +88,7 @@ static FILE *new_file(const char *name)
     FILE *file=fdopen(fd,"wb");if(!file)close(fd);return file;
 #endif
 }
-static int movie_path(char *out,size_t size,const char *id,const char *file)
+static int storage_path(char *out,size_t size,const char *group,const char *id,const char *file)
 {
     const char *root=getenv("BLASTEM_REA_DIR");
 #ifdef _WIN32
@@ -92,8 +97,9 @@ static int movie_path(char *out,size_t size,const char *id,const char *file)
 #endif
     if(!root||!*root||!id||!id[0]||strlen(id)>64)return 0;
     for(const char *p=id;*p;p++)if(!isalnum((unsigned char)*p)&&*p!='-')return 0;
-    return snprintf(out,size,"%s/movies/%s/%s",root,id,file)<(int)size;
+    return snprintf(out,size,"%s/%s/%s/%s",root,group,id,file)<(int)size;
 }
+static int movie_path(char *out,size_t size,const char *id,const char *file){return storage_path(out,size,"movies",id,file);}
 static unsigned char *read_all(FILE *f,size_t *size)
 {
     if(!f)return NULL;
@@ -108,7 +114,7 @@ static int identify(void)
 {
     if(identified)return 1;
     const system_media *media=current_media();
-    if(!media||!media->buffer||media->chain)return 0;
+    if(!media||!media->buffer)return 0;
     sha1(media->buffer,media->size,rom_hash);
     FILE *f=NULL;
 #ifdef _WIN32
@@ -135,22 +141,31 @@ static void finish(void)
     if(recording){fflush(recording);fclose(recording);recording=NULL;}
     free(playback);playback=NULL;
 }
-int rea_movie_active(void){return mode!=0;}
+int rea_movie_active(void){return mode!=0||run_remaining!=0;}
 void rea_movie_reset(void)
 {
     finish();mode=position=total=desync=identified=0;movie_id[0]=error_text[0]=0;
+    rom_generation++;execution_generation++;run_remaining=run_completed=run_total=0;last_capture_sequence=0;
     memset(held,0,sizeof(held));memset(latched,0,sizeof(latched));
 }
+void rea_movie_published(uint64_t sequence,unsigned frame){last_capture_sequence=sequence;last_capture_frame=frame;}
+static int supported(void);
 const char *rea_movie_metadata(void)
 {
-    static char json[640];
-    snprintf(json,sizeof(json),"{\"id\":\"%s\",\"mode\":\"%s\",\"frame\":%u,\"length\":%u,\"paused\":%s,\"speed\":%u,\"desync\":%s,\"error\":\"%s\"}",
-        movie_id,modes[mode],position,total,current_system&&current_system->paused?"true":"false",speed,desync?"true":"false",error_text);
+    static char json[2048];char rom[41]={0},build[41]={0},configuration[41]={0},name[128]="Genesis / Mega Drive";
+    unsigned frame=0;
+    if(current_system&&current_system->type==SYSTEM_GENESIS){
+        frame=((genesis_context *)current_system)->vdp->frame;
+        if(identify())for(unsigned i=0;i<20;i++){sprintf(rom+i*2,"%02x",rom_hash[i]);sprintf(build+i*2,"%02x",build_hash[i]);sprintf(configuration+i*2,"%02x",config_identity[i]);}
+        const char *title=current_system->info.name;if(title){unsigned i=0;for(;title[i]&&i<sizeof(name)-1;i++)name[i]=(title[i]>=32&&title[i]<127&&title[i]!='"'&&title[i]!='\\')?title[i]:'?';name[i]=0;}
+    }
+    snprintf(json,sizeof(json),"{\"protocol\":2,\"id\":\"%s\",\"mode\":\"%s\",\"frame\":%u,\"length\":%u,\"paused\":%s,\"speed\":%u,\"desync\":%s,\"error\":\"%s\",\"rom_name\":\"%s\",\"rom_sha1\":\"%s\",\"build_sha1\":\"%s\",\"configuration_sha1\":\"%s\",\"rom_generation\":%u,\"generation\":%u,\"machine_frame\":%u,\"capture_frame\":%u,\"capture_sequence\":%llu,\"experiment_remaining\":%u,\"experiment_completed\":%u,\"experiment_total\":%u}",
+        movie_id,modes[mode],position,total,current_system&&current_system->paused?"true":"false",speed,desync?"true":"false",error_text,name,rom,build,configuration,rom_generation,execution_generation,frame,last_capture_frame,(unsigned long long)last_capture_sequence,run_remaining,run_completed,run_total);
     return json;
 }
 static void reply(const char *error)
 {
-    char output[1024];
+    char output[4096];
     int n=snprintf(output,sizeof(output),"{\"ok\":%s,\"error\":\"%s\",\"state\":%s}\n",error?"false":"true",error?error:"",rea_movie_metadata());
     if(client!=BAD_SOCKET){send(client,output,n,MSG_NOSIGNAL);close_socket(client);client=BAD_SOCKET;}
 }
@@ -162,6 +177,7 @@ int rea_movie_input(unsigned port,unsigned button,int down)
 {
     if(port<1||port>2||button<DPAD_UP||button>BUTTON_MODE)return mode!=0;
     if(applying)return 0;
+    if(run_remaining)return 1;
     if(mode==2||mode==3)return 1;
     unsigned short bit=1u<<button;
     if(down)held[port-1]|=bit;else held[port-1]&=~bit;
@@ -210,11 +226,13 @@ void rea_movie_frame(void)
         unsigned short masks[2]={row[0]|row[1]<<8,row[2]|row[3]<<8};
         apply_masks(masks);position++;
     }
+    if(run_remaining){run_remaining--;run_completed++;if(!run_remaining){apply_masks((unsigned short[2]){0,0});pause_machine();}}
 }
 static int supported(void)
 {
     if(!current_system||current_system->type!=SYSTEM_GENESIS||!current_system->serialize||!current_system->deserialize)return 0;
     genesis_context *g=(genesis_context *)current_system;
+    if(current_media()&&current_media()->chain)return 0;
     if(g->expansion||g->mars||g->mapper_type==MAPPER_JCART)return 0;
     for(unsigned i=0;i<3;i++)if(g->io.ports[i].device_type!=IO_NONE&&g->io.ports[i].device_type!=IO_GAMEPAD3&&g->io.ports[i].device_type!=IO_GAMEPAD6)return 0;
     return identify();
@@ -232,13 +250,40 @@ static void restore_checkpoint(unsigned char *data,size_t size)
     g->m68k->sync_cycle=g->m68k->target_cycle=g->m68k->cycles+1;
     g->vdp->output_lines=g->vdp->h40_lines=0;g->vdp->pushed_frame=1;
     g->vdp->output=g->vdp->fb=NULL;rea_raster_clear(g->vdp);
+    execution_generation++;
 }
 void rea_movie_service(void)
 {
     if(!pending[0])return;
     char operation[16]={0},id[65]={0},filename[4096];
     sscanf(pending,"%15s %64s",operation,id);pending[0]=0;
+    if(!strcmp(operation,"capture")){rea_stream_poll();reply(last_capture_sequence?NULL:"No completed REA capture is available yet");return;}
     if(!supported()){reply("Movies require a standard Genesis cartridge and 3/6-button pads");return;}
+    if(!strcmp(operation,"run")){
+        if(mode){reply("Stop the movie before running a controlled experiment");return;}
+        unsigned count,p1,p2;if(sscanf(id,"%u",&count)!=1||count<1||count>3600){reply("Invalid bounded experiment");return;}
+        p1=run_p1;p2=run_p2;
+        run_remaining=run_total=count;run_completed=0;apply_masks((unsigned short[2]){p1,p2});
+        current_system->frame_advance=0;current_system->paused=0;reply(NULL);return;
+    }
+    if(!strcmp(operation,"cp_save")||!strcmp(operation,"cp_restore")){
+        if(mode){reply("Stop the movie before saving or restoring an experiment checkpoint");return;}
+        if(!storage_path(filename,sizeof(filename),"checkpoints",id,"checkpoint.rmc")){reply("Invalid checkpoint ID");return;}
+        servicing=1;
+        if(!strcmp(operation,"cp_save")){
+            FILE *file=new_file(filename);if(!file){servicing=0;reply("Checkpoint exists or is not writable");return;}
+            size_t core_size;unsigned char *core=current_system->serialize(current_system,&core_size),*data=malloc(core_size+20);
+            if(!data){free(core);fclose(file);servicing=0;reply("Checkpoint allocation failed");return;}
+            configuration_hash(data);memcpy(config_identity,data,20);memcpy(data+20,core,core_size);free(core);
+            unsigned char header[56]={0};memcpy(header,"RMCP0001",8);memcpy(header+8,rom_hash,20);memcpy(header+28,build_hash,20);put32(header+48,core_size+20);put32(header+52,crc32(0,data,core_size+20));
+            int ok=fwrite(header,1,56,file)==56&&fwrite(data,1,core_size+20,file)==core_size+20;if(fclose(file))ok=0;
+            if(ok)restore_checkpoint(data,core_size+20);free(data);servicing=0;current_system->paused=1;reply(ok?NULL:"Checkpoint write failed");return;
+        }
+        size_t size;unsigned char *data=read_all(open_file(filename,"rb"),&size),configuration[20];configuration_hash(configuration);
+        int ok=data&&size>76&&!memcmp(data,"RMCP0001",8)&&!memcmp(data+8,rom_hash,20)&&!memcmp(data+28,build_hash,20)&&get32(data+48)==size-56&&get32(data+52)==crc32(0,data+56,size-56)&&!memcmp(data+56,configuration,20);
+        if(ok){restore_checkpoint(data+56,size-56);memcpy(config_identity,configuration,20);memset(held,0,sizeof(held));movie_id[0]=error_text[0]=0;position=total=desync=0;}
+        free(data);servicing=0;current_system->paused=1;reply(ok?NULL:"Checkpoint is incompatible or damaged");return;
+    }
     if(!movie_path(filename,sizeof(filename),id,"inputs.rmt")){reply("Invalid movie ID");return;}
     if(mode==1){reply("Stop recording before starting another movie");return;}
     servicing=1;
@@ -248,7 +293,7 @@ void rea_movie_service(void)
         size_t core_size;unsigned char *core=current_system->serialize(current_system,&core_size);
         size_t size=core_size+20;unsigned char *state=malloc(size);
         if(!state){free(core);fclose(f);servicing=0;reply("Checkpoint allocation failed");return;}
-        configuration_hash(state);memcpy(state+20,core,core_size);free(core);
+        configuration_hash(state);memcpy(config_identity,state,20);memcpy(state+20,core,core_size);free(core);
         unsigned char header[56]={0};memcpy(header,"RMTAS001",8);memcpy(header+8,rom_hash,20);memcpy(header+28,build_hash,20);put32(header+48,size);put32(header+52,crc32(0,state,size));
         movie_path(filename,sizeof(filename),id,"start.state");FILE *start=new_file(filename);
         int ok=start&&fwrite(state,1,size,start)==size;
@@ -280,13 +325,21 @@ static void command(char *line)
 {
     if(!current_system){reply("No active emulator");return;}
     if(!strcmp(line,"status")){reply(NULL);return;}
-    if(!strcmp(line,"pause")){pause_machine();reply(NULL);return;}
+    if(!strcmp(line,"describe")){
+        if(supported())configuration_hash(config_identity);
+        char output[4096];const char *metadata=rea_movie_metadata();int n=snprintf(output,sizeof(output),"{\"ok\":true,\"state\":%.*s,\"movie_supported\":%s,\"movie_reason\":\"%s\"}}\n",(int)strlen(metadata)-1,metadata,supported()?"true":"false",supported()?"":"Movie/checkpoint support requires a standard Genesis cartridge and 3/6-button pads");
+        if(client!=BAD_SOCKET){send(client,output,n,MSG_NOSIGNAL);close_socket(client);client=BAD_SOCKET;}return;
+    }
+    if(!strcmp(line,"pause")||!strcmp(line,"capture")){
+        if(run_remaining){run_remaining=0;apply_masks((unsigned short[2]){0,0});}
+        pause_machine();if(!strcmp(line,"capture"))strcpy(pending,"capture");else reply(NULL);return;
+    }
     if(!strcmp(line,"play")||!strcmp(line,"step")){
         if(desync||mode==3){reply("Restart replay or stop the movie first");return;}
         current_system->frame_advance=!strcmp(line,"step");current_system->paused=0;reply(NULL);return;
     }
     if(!strcmp(line,"stop")){
-        pause_machine();finish();mode=0;apply_masks((unsigned short[2]){0,0});memset(held,0,sizeof(held));reply(NULL);return;
+        pause_machine();finish();mode=run_remaining=desync=0;error_text[0]=0;apply_masks((unsigned short[2]){0,0});memset(held,0,sizeof(held));reply(NULL);return;
     }
     unsigned value,port,down,button;
     if(sscanf(line,"speed %u",&value)==1){
@@ -297,13 +350,21 @@ static void command(char *line)
         if(mode==2||mode==3){reply("Controller input is locked during playback");return;}
         if(down)current_system->gamepad_down(current_system,port,button);else current_system->gamepad_up(current_system,port,button);reply(NULL);return;
     }
-    if(!strncmp(line,"record ",7)||!strncmp(line,"replay ",7)){
+    unsigned count,p1,p2;
+    if(sscanf(line,"run %u %u %u",&count,&p1,&p2)==3){
+        if(!count||count>3600||p1>8190||p2>8190||(p1&1)||(p2&1)){reply("Invalid experiment bounds or controller masks");return;}
+        run_p1=p1;run_p2=p2;
+        snprintf(pending,sizeof(pending),"run %u",count);pause_machine();return;
+    }
+    if(!strncmp(line,"record ",7)||!strncmp(line,"replay ",7)||!strncmp(line,"cp_save ",8)||!strncmp(line,"cp_restore ",11)){
+        if(run_remaining){reply("Pause the bounded experiment before changing its starting state");return;}
         strncpy(pending,line,sizeof(pending)-1);pause_machine();return;
     }
     reply("Unknown movie command");
 }
 void rea_movie_poll(void)
 {
+    rea_stream_poll();
     static char buffer[256];static unsigned used;
     static uint32_t client_started;
     if(!initialized){

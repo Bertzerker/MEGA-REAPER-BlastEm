@@ -2,8 +2,8 @@
 import net from 'node:net';
 import path from 'node:path';
 import {randomUUID,createHash} from 'node:crypto';
-import {readFile,writeFile,mkdir,readdir,rename,stat} from 'node:fs/promises';
-import {gzipSync,deflateSync} from 'node:zlib';
+import {readFile,writeFile,mkdir,readdir,rename,stat,open,rmdir} from 'node:fs/promises';
+import {gzipSync,deflateSync,gunzipSync} from 'node:zlib';
 import {jsonSnapshot} from './protocol.mjs';
 import {decode} from './public/decoder.mjs';
 import {AtlasRenderer} from './atlas.mjs';
@@ -12,16 +12,16 @@ const checkId=id=>{if(!uuid.test(id||''))throw Error('Invalid ID');return id;};
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
 export function nativeCommand(port,line){
   return new Promise((resolve,reject)=>{
-    if(!Number.isInteger(port)||port<1||port>65535)return reject(Error('Movie control is unavailable. Restart with the updated launcher.'));
+    if(!Number.isInteger(port)||port<1||port>65535)return reject(Object.assign(Error('No native control port is configured for this server.'),{code:'control_not_configured',status:503}));
     const socket=net.connect({host:'127.0.0.1',port});let data='';
-    socket.setTimeout(5000,()=>socket.destroy(Error('Emulator control timed out')));
+    socket.setTimeout(5000,()=>socket.destroy(Object.assign(Error('Native command timed out; its outcome is unknown. Recheck machine state before issuing another action.'),{code:'command_timeout',status:504})));
     socket.on('connect',()=>socket.write(line+'\n'));
-    socket.on('error',()=>reject(Error('Movie control is unavailable. Restart MEGA REAPER with the updated launcher.')));
+    socket.on('error',e=>reject(e.code==='command_timeout'?e:Object.assign(Error('The native control connection is unavailable. Start or reconnect the emulator using the REA launcher.'),{code:'control_disconnected',status:503})));
     socket.on('end',()=>{if(!data.includes('\n'))reject(Error('Emulator closed control connection'));});
     socket.on('data',chunk=>{
       data+=chunk;if(data.length>4096){socket.destroy(Error('Oversized emulator response'));return;}
       if(data.includes('\n')){
-        socket.end();try{const result=JSON.parse(data.split('\n')[0]);if(!result.ok)throw Error(result.error);resolve(result.state);}catch(e){reject(e);}
+        socket.end();try{const result=JSON.parse(data.split('\n')[0]);if(!result.ok)throw Object.assign(Error(result.error),{code:'native_rejected',status:409});resolve(result.state);}catch(e){reject(e);}
       }
     });
   });
@@ -55,7 +55,7 @@ export class MovieStore {
   constructor(dir,{port,command}={}){this.dir=dir;this.command=command||((line)=>nativeCommand(port,line));this.tail=Promise.resolve();}
   // Serialize control mutations: changing movies must not race a second tab.
   exclusive(work){const result=this.tail.then(work);this.tail=result.catch(()=>{});return result;}
-  async status(){try{return {available:true,...await this.command('status')};}catch(e){return {available:false,error:e.message};}}
+  async status(){try{return {available:true,...await this.command('status')};}catch(e){return {available:false,error:e.message,code:e.code||'control_disconnected'};}}
   async movies(){
     const root=path.join(this.dir,'movies');await mkdir(root,{recursive:true});
     const movies=[];
@@ -88,26 +88,55 @@ export class MovieStore {
   async annotate(snapshot,{title='',markdown=''}={}){
     if(!snapshot)throw Object.assign(Error('Capture expired. Resume inspection and capture a new comment.'),{status:409});
     const s=typeof snapshot.ram==='string'?decode(snapshot):snapshot;
-    if(!s.movie?.id||s.movie.mode==='idle')throw Error('Start a movie recording or replay before adding a frame comment');
-    checkId(s.movie.id);
+    const movie=s.movie?.id&&s.movie.mode!=='idle'?checkId(s.movie.id):null;
     const id=randomUUID(),folder=path.join(this.dir,'comments',id);await mkdir(folder,{recursive:true});
     const image=new AtlasRenderer().render(s),rgba=new Uint8Array(s.width*s.height*4);
     for(let i=0;i<s.width*s.height;i++){rgba.set(s.rgb.subarray(i*3,i*3+3),i*4);rgba[i*4+3]=255;}
     const snapshotBytes=gzipSync(Buffer.from(JSON.stringify(jsonSnapshot(s))));
     const atlasBytes=png(image.atlas.width,image.atlas.height,image.atlasPixels),renderBytes=png(s.width,s.height,rgba);
     await Promise.all([writeFile(path.join(folder,'snapshot.json.gz'),snapshotBytes),writeFile(path.join(folder,'atlas.png'),atlasBytes),writeFile(path.join(folder,'render.png'),renderBytes)]);
-    const note={schema:1,id,movie:s.movie.id,movie_frame:s.movie.frame,emulator_frame:s.frame,capture:s.id,created:new Date().toISOString(),width:s.width,height:s.height,
+    const note={schema:2,id,movie,movie_frame:movie?s.movie.frame:null,emulator_frame:s.frame,capture:s.id,context:s.evidence_context||null,created:new Date().toISOString(),width:s.width,height:s.height,
       evidence:{snapshot:{file:'snapshot.json.gz',sha256:hash(snapshotBytes)},atlas:{file:'atlas.png',sha256:hash(atlasBytes)},render:{file:'render.png',sha256:hash(renderBytes)}}};
     return this.saveNote(folder,note,{title,markdown});
   }
   async saveNote(folder,note,body){
     if(typeof body.markdown!=='string'||body.markdown.length>65536||typeof body.title!=='string'||body.title.length>200)throw Error('Note exceeds title/text limit');
     const blocks=[...body.markdown.matchAll(/^(`{3,}|~{3,})json[ \t]*\r?\n([\s\S]*?)^\1[ \t]*$/gmi)];for(const block of blocks)JSON.parse(block[2]);
-    const result={...note,title:body.title,markdown:body.markdown,updated:new Date().toISOString()};
+    const classification=body.classification||note.classification||'observed';
+    if(!['observed','hypothesis'].includes(classification))throw Error('Unknown finding classification');
+    const result={...note,revision:(note.revision||0)+1,classification,title:body.title,markdown:body.markdown,updated:new Date().toISOString()};
     const doc=`# ${body.title.replace(/[\r\n]/g,' ')}\n\nMovie: ${note.movie} · movie frame: ${note.movie_frame} · emulator frame: ${note.emulator_frame}\n\nCapture: ${note.capture}\n\n![Captured render](render.png)\n\n![Six-view atlas](atlas.png)\n\n[Render and memory snapshot](snapshot.json.gz)\n\n${body.markdown}\n`;
     await atomic(path.join(folder,'note.md'),doc);await atomic(path.join(folder,'note.json'),JSON.stringify(result,null,2));return result;
   }
-  async updateNote(id,body){const folder=path.join(this.dir,'comments',checkId(id)),note=JSON.parse(await readFile(path.join(folder,'note.json'),'utf8'));return this.saveNote(folder,note,body);}
+  async updateNote(id,body){
+    const folder=path.join(this.dir,'comments',checkId(id)),lock=path.join(folder,'.write-lock');
+    if(!Number.isInteger(body.revision)||body.revision<0)throw Object.assign(Error('Read the current note revision before saving.'),{status:428,code:'revision_required'});
+    try{await mkdir(lock);}catch(e){if(e.code==='EEXIST')throw Object.assign(Error('This note is being saved by another client. Your draft is unchanged.'),{status:409,code:'note_busy'});throw e;}
+    try{
+      const note=JSON.parse(await readFile(path.join(folder,'note.json'),'utf8'));
+      if(body.revision!==(note.revision||0))throw Object.assign(Error('Another tab saved this note. Review the newer version before saving your draft.'),{status:409,code:'revision_conflict',latest:note});
+      return await this.saveNote(folder,note,body);
+    }finally{await rmdir(lock);}
+  }
+  async savedSnapshot(id){
+    const note=JSON.parse((await this.artifact(id,'note.json')).toString()),bytes=await this.artifact(id,'snapshot.json.gz');
+    if(hash(bytes)!==note.evidence.snapshot.sha256)throw Object.assign(Error('Saved evidence failed its SHA-256 integrity check.'),{status:422});
+    const raw=JSON.parse(gunzipSync(bytes,{maxOutputLength:32*1024*1024}));
+    if(raw.id!==note.capture||raw.frame!==note.emulator_frame)throw Error('Saved note and capture identities differ');
+    return {...decode(raw),archive:{note:id,title:note.title},evidence_context:note.context||raw.evidence_context};
+  }
+  async inputRows(id,start=0,length=60){
+    checkId(id);if(!Number.isInteger(start)||start<0||!Number.isInteger(length)||length<1||length>256)throw Error('Input rows require start >= 0 and length 1–256');
+    const file=await open(path.join(this.dir,'movies',id,'inputs.rmt'),'r');
+    try{
+      const info=await file.stat(),header=Buffer.alloc(56);await file.read(header,0,56,0);
+      if(header.subarray(0,8).toString()!=='RMTAS001'||info.size<56)throw Error('Invalid movie input log');
+      const total=Math.floor((info.size-56)/8),count=Math.min(length,Math.max(0,total-start)),data=Buffer.alloc(count*8);
+      await file.read(data,0,data.length,56+start*8);
+      const names=['up','down','left','right','a','b','c','start','x','y','z','mode'],buttons=mask=>names.filter((_,i)=>mask&(1<<(i+1)));
+      return {schema:1,movie:id,start,total,convention:'Row N checks capture N; pad masks apply after capture N, for frame N+1.',rows:Array.from({length:count},(_,i)=>({frame:start+i,next_frame:start+i+1,p1:data.readUInt16LE(i*8),p2:data.readUInt16LE(i*8+2),buttons1:buttons(data.readUInt16LE(i*8)),buttons2:buttons(data.readUInt16LE(i*8+2)),checksum:data.readUInt32LE(i*8+4).toString(16).padStart(8,'0')}))};
+    }finally{await file.close();}
+  }
   async artifact(id,file){
     checkId(id);if(!['note.json','note.md','atlas.png','render.png','snapshot.json.gz'].includes(file))throw Error('Unknown evidence file');
     return readFile(path.join(this.dir,'comments',id,file));

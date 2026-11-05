@@ -10,4 +10,5 @@ int rea_movie_input(unsigned port, unsigned button, int down);
 const char *rea_movie_metadata(void);
 int rea_movie_active(void);
 void rea_movie_reset(void);
+void rea_movie_published(uint64_t sequence, unsigned frame);
 #endif

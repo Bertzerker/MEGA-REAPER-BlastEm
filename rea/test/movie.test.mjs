@@ -22,9 +22,9 @@ test('movie library and frame notes survive restart with exact evidence and port
     s.ram[0]=99;
     const saved=JSON.parse(gunzipSync(await store.artifact(note.id,'snapshot.json.gz')));assert.equal(saved.ram,'0c22');assert.equal(saved.movie.frame,12);
     const restarted=new MovieStore(dir,{command});assert.equal((await restarted.movies())[0].title,'Investigation');assert.equal((await restarted.comments())[0].capture,'capture-123');
-    await assert.rejects(()=>restarted.updateNote(note.id,{title:'Bad JSON',markdown:'```json\n{bad}\n```'}));
-    await assert.rejects(()=>restarted.updateNote(note.id,{title:'Bad JSON',markdown:'~~~json\n{bad}\n~~~'}));
-    await restarted.updateNote(note.id,{title:'Edited',markdown:'Corrected observation'});
+    await assert.rejects(()=>restarted.updateNote(note.id,{revision:1,title:'Bad JSON',markdown:'```json\n{bad}\n```'}));
+    await assert.rejects(()=>restarted.updateNote(note.id,{revision:1,title:'Bad JSON',markdown:'~~~json\n{bad}\n~~~'}));
+    await restarted.updateNote(note.id,{revision:1,title:'Edited',markdown:'Corrected observation'});
     assert.match((await restarted.artifact(note.id,'note.md')).toString(),/Corrected observation/);
     await assert.rejects(()=>store.control({action:'replay',id:'../outside'}),/Invalid ID/);
     await assert.rejects(()=>store.artifact(note.id,'../../secret'),/Unknown evidence/);
