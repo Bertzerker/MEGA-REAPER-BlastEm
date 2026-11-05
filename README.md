@@ -6,7 +6,7 @@ Based on **BlastEm by Mike Pavone and contributors**, through the [ulalume/blast
 
 ## What it shows
 
-These features are included in **v0.4.0**. Click any crop to enlarge it.
+These features are included in **v0.5.0**. Click any crop to enlarge it.
 
 | Feature | Cropped example |
 | --- | --- |
@@ -19,7 +19,7 @@ All six graphics views come from one emulation pass and travel together as one a
 
 ## Ready-to-run Windows build
 
-Download the [v0.4.0 Windows x64 portable ZIP](https://github.com/Bertzerker/MEGA-REAPER-BlastEm/releases/download/mega-reaper-v0.4.0/MEGA-REAPER-BlastEm-0.4.0-windows-x64.zip), extract the entire archive, and double-click **MEGA REAPER.exe**. Choose a local ROM, then copy the inspector URL into the Codex in-app browser. Closing the launcher stops its emulator and server. [Release notes and checksum](https://github.com/Bertzerker/MEGA-REAPER-BlastEm/releases/tag/mega-reaper-v0.4.0)
+Download the [v0.5.0 Windows x64 portable ZIP](https://github.com/Bertzerker/MEGA-REAPER-BlastEm/releases/download/mega-reaper-v0.5.0/MEGA-REAPER-BlastEm-0.5.0-windows-x64.zip), extract the entire archive, and double-click **MEGA REAPER.exe**. Choose a local ROM, then copy the inspector URL into the Codex in-app browser. Closing the launcher stops its emulator and server. [Release notes and checksum](https://github.com/Bertzerker/MEGA-REAPER-BlastEm/releases/tag/mega-reaper-v0.5.0)
 
 The ZIP includes the compiled emulator, native launcher, REA interface, Node.js runtime, production dependencies, SDL2 and license notices. No Node installation, npm command, administrator access or PowerShell policy change is required. ROMs are not included.
 
@@ -45,7 +45,9 @@ Pixel selection pins its render and memory before showing details. **Inspect sav
 
 Use **Add to catalog** from a selected sprite or tile pixel to create a named entry or append an animation variant. **Show all matches** isolates captured samples, and **Follow instance** tracks one occurrence. **Attach to comment** preserves that capture and catalog revision during live play or replay. [Catalog walkthrough](rea/README.md#sprite-and-tile-catalog)
 
-**Checkpoints** and **Execution** are separate from movie playback. The protocol-2 native bridge can pause/save a named compatible checkpoint, restore it, and run 1–3600 video frames with two controller masks. Copied-memory watches stop at explicit capture/event limits. Instruction tracing and verified game collision adapters remain native/backend follow-up work.
+**Collision** overlays Elemental Master (USA) player, contact object and pickup boxes on Composite. The profile reads the game's collision operands from the displayed frame's work RAM. A Stage 1 replay verified an 8×16 player box against a 24×24 enemy through a one-pixel near miss and a one-pixel overlap that reduced health. [Collision profile and replay evidence](rea/COLLISION.md)
+
+**Checkpoints** and **Execution** are separate from movie playback. The protocol-2 native bridge can pause/save a named compatible checkpoint, restore it, and run 1–3600 video frames with two controller masks. Copied-memory watches stop at explicit capture/event limits. Use the native debugger for instruction tracing.
 
 Movies currently support standard Genesis cartridges with two 3/6-button controllers. Replay requires the exact ROM and emulator executable used for recording. This first movie implementation does not include rerecording, editable input timelines, rewind or movies from other emulator formats. See [movie details and limitations](rea/README.md#movies-and-frame-comments).
 
@@ -55,7 +57,7 @@ No commercial ROMs, local captures, dependency downloads or compiled binaries ar
 
 The previously measured Windows configuration sustained **59.92 unique updates/s** across all six views over three minutes with Elemental Master (USA), with zero native capture gaps, delivery skips, browser drops or underruns. The highest sampled p95 frame interval was **17.1 ms**. This is the Genesis NTSC source rate. The presentation buffer adds about 100 ms of latency. A separate short H40 diagnostic run with active v0.4.0 catalog requests delivered about 60 atlas packets per second with zero native gaps or server skips.
 
-The implementation uses specialized capture writes, touched-row resets, a persistent nonblocking TCP stream, lossless pixel-run atlas transport and one WebGL canvas. Thirty-two JavaScript tests, native capture tests, and H40/H32 diagnostic ROM checks validate the implementation. See [measurements, supported modes and limitations](rea/README.md).
+The implementation uses specialized capture writes, touched-row resets, a persistent nonblocking TCP stream, lossless pixel-run atlas transport and one WebGL canvas. Thirty-five JavaScript tests, native capture tests, and H40/H32 diagnostic ROM checks validate the implementation. See [measurements, supported modes and limitations](rea/README.md).
 
 ```powershell
 npm test --prefix rea

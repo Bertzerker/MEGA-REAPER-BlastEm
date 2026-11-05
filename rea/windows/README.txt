@@ -60,6 +60,13 @@ append an animation variant. Show all matches or follow one captured instance.
 play or replay. Comments and movie exports include the saved isolation image
 and catalog definition. See README.md for the illustrated guide.
 
+Elemental Master (USA) collision helper:
+Open Collision, enable "Overlay on Composite", and choose All views or Focus
+Composite. Filter player, contact and pickup boxes and inspect the matching
+RAM operands in live play, replay, or saved evidence. The player and a Stage 1
+type-22 enemy were verified with a replayed near miss and a damaging hit.
+See rea\COLLISION.md for the ROM identity, evidence and profile scope.
+
 Project attribution:
 BlastEm was created by Mike Pavone, with contributions from the BlastEm community.
 Original project: https://www.retrodev.com/blastem/

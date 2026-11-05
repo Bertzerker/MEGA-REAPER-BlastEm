@@ -60,6 +60,7 @@ All HTTP endpoints are GET on the chosen inspector URL. Fetch `/api/snapshot`, r
 | `/api/diff` | Same range parameters plus `from=<older-id>`, optional `snapshot=<newer-id>` |
 | `/api/sprites` | Linked SAT entries; optional `snapshot` |
 | `/api/pixel` | `view=composite|sprites|a|b|window|source|tiles`, integer `x`, `y`, optional `snapshot`; `tiles` is explicitly a snapshot diagnostic |
+| `/api/collision` | Elemental Master (USA) contact operands and overlap for the latest capture, retained `snapshot`, or saved `note` |
 | `/api/metrics` | Source/atlas counters, native frame gaps/bytes, encoded packet size, Node pipeline p95/max, pending messages/codec, unique presentation rate, p95 interval, upload cost, drops, duplicates and underruns |
 | `/stream` | WebSocket endpoint: one combined atlas packet per capture |
 
@@ -72,6 +73,8 @@ Offsets accept decimal or `0x` hex. RAM offset zero is bus address `0xFF0000`. W
 Pixel selection pins the displayed capture before revealing details. A selected view or baseline is retained under an explicit owner/purpose lease, renewed while in use and bounded to 16 leases with two-minute expiry. `POST /api/evidence/pin` takes `capture`, `owner` and `purpose` (`view` or `baseline`); release through `/api/evidence/release`. Expired/missing pins fail visibly. ROM/core/native producer scopes protect memory differences; a baseline from an incompatible scope is named and disabled rather than silently reused.
 
 `GET /api/evidence?capture=<id>` returns a binary atlas/evidence packet. `GET /api/evidence?note=<uuid>` verifies the saved snapshot SHA-256 and loads archived evidence after restart/history eviction. Saved review drives graphics, memory and pixel inspection without executing the machine. Return to live is explicit. All views/Focus reuse one texture; changing focus or bounds on the same capture does not upload it again.
+
+The **Collision** tab adds a ROM-matched gameplay overlay to Composite. It reads the Elemental Master (USA) player-contact operands from the displayed capture and works in live, frozen, and saved inspection. See the [operand map and Stage 1 replay proof](COLLISION.md).
 
 `POST /api/control` is separate from movie persistence. It supports `play`, `pause`, `step`, `speed`, `pad`, `pause_capture` (owner), `checkpoint_save` (name), `checkpoint_restore` (id), and `run` (frames, p1, p2). Native protocol 2 is required for checkpoints, experiments and acknowledged capture. The last action accepts 1–3600 completed video frames and two masks in bits 1–12; stopping is at a completed-frame boundary. It does not promise an instruction-exact stop. A pause/capture response names the native acknowledged sequence and its copied render/memory/movie boundary; it fails rather than substituting an older execution generation. Step a restored machine before asking for its next completed render.
 
@@ -136,7 +139,7 @@ In the short Windows H40 fixture run, 316 captures and 316 WebSocket deliveries 
 
 ## Build and validate
 
-`Build-Windows.ps1 -Version 0.4.0` creates the portable ZIP from the built emulator, SDL2 and GLEW development files. It verifies the pinned Node.js 24.20.0 x64 archive, installs locked production dependencies without lifecycle scripts, compiles the Win32 launcher using MinGW in WSL, and includes the illustrated guide and license notices. It writes a source-commit/file-hash manifest and a ZIP checksum. Add `-BuildEmulator -PythonPath '/mnt/c/path/to/python.exe'` to run the native emulator build too. Use a new version when an output directory already exists. The inherited upstream `v*` release workflow does not package REA. MEGA REAPER release tags use `mega-reaper-v*`.
+`Build-Windows.ps1 -Version 0.5.0` creates the portable ZIP from the built emulator, SDL2 and GLEW development files. It verifies the pinned Node.js 24.20.0 x64 archive, installs locked production dependencies without lifecycle scripts, compiles the Win32 launcher using MinGW in WSL, and includes the illustrated guide and license notices. It writes a source-commit/file-hash manifest and a ZIP checksum. Add `-BuildEmulator -PythonPath '/mnt/c/path/to/python.exe'` to run the native emulator build too. Use a new version when an output directory already exists. The inherited upstream `v*` release workflow does not package REA. MEGA REAPER release tags use `mega-reaper-v*`.
 
 Test an extracted release with `Test-WindowsPackage.ps1 -Archive <zip> -Rom <original-diagnostic.bin>`. Use the original basic H40/H32 diagnostic from `make_test_rom.py`; this checks actual VDP colors/RAM, every winning source pixel, all packaged file hashes, bundled Node with the global runtime removed from PATH, paths with spaces/Unicode, duplicate-launch rejection and child-process cleanup. It refuses to run while another BlastEm instance exists. Native launcher options `--headless --duration-ms <n>` support bounded automation without opening a window.
 

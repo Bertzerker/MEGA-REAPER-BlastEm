@@ -2,6 +2,7 @@
 import {randomUUID,createHash} from 'node:crypto';
 import {mkdir,readdir,readFile,writeFile} from 'node:fs/promises';
 import path from 'node:path';
+import {collisionSupport} from './public/collision.mjs';
 export function contextOf(s,fallback='legacy'){
   if(s.evidence_context)return s.evidence_context;
   const source=s.id?.match(/^(\d+-\d+)-\d+$/)?.[1]||fallback;
@@ -26,6 +27,7 @@ export class SessionBridge {
     const idleReason=!ready?connectionReason:!v2?'This native build supports movie transport only. General checkpoints and experiments require bridge protocol 2.':native.experiment_remaining?'Pause the running experiment before changing its starting state.':!idle?'Stop the active movie before changing experiment state.':!movieSupported?movieReason:'';
     const captureAge=metrics?.last_received?Date.now()-metrics.last_received:null;
     const captureMatches=!latest||!ready||!v2||(latest.movie?.rom_generation===native.rom_generation&&(!native.rom_sha1||latest.movie?.rom_sha1===native.rom_sha1));
+    const collision=collisionSupport(captureMatches?latest:null,native.rom_sha1||latest?.movie?.rom_sha1);
     return {schema:1,adapter:'genesis-blastem',workspace_id:this.workspace,identity:{name:native.rom_name||'Genesis / Mega Drive',rom:native.rom_sha1||latest?.movie?.rom_sha1||null,build:native.build_sha1||null,session:latest?contextOf(latest,this.workspace).session:null},
       connection:{viewer:'http',producer:producer?'connected':'disconnected',control:ready?'ready':native.code||'disconnected',reason:connectionReason,capture_age_ms:captureAge},
       machine:{state:ready?(native.paused?'paused':'running'):'unknown',frame:native.machine_frame??latest?.frame??null,...native},
@@ -43,7 +45,7 @@ export class SessionBridge {
         renderer:capability(!!latest?.raster?.valid&&captureMatches,!!latest?.raster?.valid&&captureMatches,!captureMatches?'No completed capture belongs to the current native ROM/session.':latest?latest.raster?.valid?'':'This capture mode has no supported direct VDP layer capture.':'Waiting for the first native capture.',{coverage:latest?.raster?.complete?'complete':latest?'partial':'unknown'}),
         saved_evidence:capability(true,true),frame_watch:capability(true,!!producer&&!!latest,producer?'Wait for a valid capture.':'Frame watches require an active native producer.',{max_frames:3600,max_events:500,granularity:'copied memory at completed capture boundaries'}),
         instruction_trace:capability(false,false,'Instruction tracing remains a native debugger workflow; frame watches do not trace CPU instructions.'),
-        collision_adapter:capability(false,false,'No verified ROM-specific collision profile is installed. SAT bounds describe hardware sprites, not gameplay collision.'),
+        collision_adapter:{...collision,reason:collision.reason||'The Elemental Master contact profile uses completed-frame RAM.'},
         timeline:capability(false,false,'Rerecording, branches and arbitrary seek require the separate determinism design in SPEC.md.')},metrics};
   }
   async control(body){

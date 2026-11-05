@@ -47,7 +47,7 @@ Until those conditions are met, the workbench presents read-only input rows and 
 
 Instruction traces need a bounded native ring with ROM/bank identity, instruction address/opcode, cycle/frame timestamps, relevant operands and declared stop timing. Export counts, byte/event limits and truncation. A watch between copied frame captures must never be labeled as every CPU write or instruction. Preserve normal core behavior when tracing is disabled, and measure native speed separately from viewer throughput when enabled.
 
-A game collision adapter must be keyed to a verified ROM/core identity and describe the actual software operands and predicates used by that game. Require source addresses, object identity, coordinate transforms and evidence references; distinguish observed/hypothesized/verified geometry. Validate against a diagnostic collision routine and replayed contact/non-contact cases before displaying a verified collision overlay. SAT rectangles remain a separate hardware diagnostic. No generic game collision profile is included in this increment.
+A game collision adapter must be keyed to a verified ROM identity and describe the actual software operands and predicates used by that game. Require source addresses, object identity, coordinate transforms and evidence references. Distinguish code-derived geometry from geometry verified against replay and CPU operands. SAT rectangles remain a separate hardware diagnostic. The first adapter covers [Elemental Master (USA) player contact](COLLISION.md) and derives its display from the selected completed-frame capture.
 
 ## Delivered: raster-time pixel evidence
 

@@ -50,6 +50,7 @@ android/local.properties
 !/README.md
 !/rea/README.md
 !/rea/SPEC.md
+!/rea/COLLISION.md
 /rea/session/
 /rea/test-output/
 /rea/build-*.log

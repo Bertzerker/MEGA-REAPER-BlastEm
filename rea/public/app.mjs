@@ -5,6 +5,7 @@ import {FramePacer} from './cadence.mjs';
 import {prepare,draw} from './renderer.mjs';
 import {movieUI,api} from './movie-ui.mjs';
 import {catalogUI} from './catalog-ui.mjs';
+import {collisionUI} from './collision-ui.mjs';
 const $=id=>document.getElementById(id),hex=(n,len=2)=>n.toString(16).toUpperCase().padStart(len,'0');
 const names={composite:'Composite · Captured output',sprites:'Sprites · Captured input',a:'Plane A · Captured input',b:'Plane B · Captured input',window:'Window · Captured input',source:'Source / priority · Captured evidence'};
 const owner=crypto.randomUUID(),article=document.createElement('article'),canvas=document.createElement('canvas'),labels=document.createElement('div');
@@ -16,6 +17,7 @@ let queue=[],buffered=false,lastInfo=0,lastStatus=0,uploadMs=0,presented=0,under
 const times=[],rafTimes=[],held=()=>['frozen','saved','invalid'].includes(evidenceMode);
 const context=s=>s?.evidence_context||{},compatible=(a,b)=>!!a&&!!b&&['rom','build','session'].every(k=>context(a)[k]===context(b)[k]);
 const message=text=>$('evidence-message').textContent=text;
+const collision=collisionUI({article,refresh:()=>{if(current){show(current);collision.describe(current);}}});
 function tabGroup(attribute){
   const buttons=[...document.querySelectorAll(`[${attribute}]`)];
   const activate=button=>{for(const b of buttons){const active=b===button;b.setAttribute('aria-selected',String(active));$(b.getAttribute(attribute)).hidden=!active;}};
@@ -70,11 +72,13 @@ function show(s){
   const focus=$('view-select').value,start=performance.now();presenter.draw(s,$('bounds').checked,focus);uploadMs=performance.now()-start;
   article.classList.toggle('focused',focus!=='all');article.classList.toggle('fixed-scale',$('zoom').value!=='fit');
   canvas.style.width=$('zoom').value==='fit'?'100%':`${canvas.width*Number($('zoom').value)}px`;
+  collision.draw(s,focus,presenter.region);
   $('empty-state').hidden=true;$('views').hidden=false;updateLabels(s);evidenceStatus();
 }
 function setCurrent(s,mode=evidenceMode){previous=compatible(current,s)?current:null;current=s;evidenceMode=mode;evidenceValid=mode==='live';show(s);info();}
 function info(){
   if(!current)return;renderMemory();renderSelection();renderTiles();
+  collision.describe(current);
   $('registers').textContent=`${evidenceMode.toUpperCase()} capture ${current.id}\nFrame ${current.frame} · VDP cycles ${current.vdp_cycles}\nCPU cycles ${current.cpu_cycles}\nSprite overlap flag: ${current.sprite_collision_flag}\n\n`+Array.from(current.regs,(v,i)=>`R${hex(i)} ${hex(v)}`).join('\n');
 }
 function renderTiles(){if(!current||!$('tile-details').open)return;const out=new Uint32Array(512*256);draw(prepare(current),'tiles',out);$('tile-snapshot').getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(out.buffer),512,256),0,0);$('tile-id').textContent=`Memory diagnostic · capture ${current.id} · palette 0`;} $('tile-details').ontoggle=renderTiles;

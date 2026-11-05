@@ -6,6 +6,7 @@ import {readFile, mkdir, stat, realpath} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {decode, inspect, sprites} from './public/decoder.mjs';
+import {collisionFor} from './public/collision.mjs';
 import {fields} from './public/transport.mjs';
 import {pack,unpack,jsonSnapshot,FrameReader} from './protocol.mjs';
 import {AtlasRenderer} from './atlas.mjs';
@@ -171,6 +172,10 @@ export function createServer(dir,options={}) {
       if(u.pathname==='/api/checkpoints')return send(200,await bridge.checkpoints());
       if(u.pathname==='/api/watch')return send(200,watch.status());
       if(u.pathname==='/api/catalog')return send(200,await catalogs.read(catalogRom(catalogCapture(u.searchParams.get('capture')))));
+      if(u.pathname==='/api/collision'&&u.searchParams.has('note')){
+        if(u.searchParams.has('snapshot'))return send(400,{error:'Select a snapshot or a saved note.'});
+        return send(200,collisionFor(await movies.savedSnapshot(u.searchParams.get('note'))));
+      }
       if(u.pathname==='/api/evidence'){
         const note=u.searchParams.get('note');let raw;
         if(note){raw=await movies.savedSnapshot(note);raw.evidence_context=contextOf(raw,bridge.workspace);pinned.set(raw.id,raw);if(pinned.size>16)pinned.delete(pinned.keys().next().value);}
@@ -224,6 +229,7 @@ export function createServer(dir,options={}) {
           return send(200,{snapshot:s.id,sprites:sprites(s),evidence:'SAT reconstruction; no gameplay objects'});
         }
         if (u.pathname === '/api/pixel') return send(200,inspect(s,u.searchParams.get('view'),Number(u.searchParams.get('x')),Number(u.searchParams.get('y'))));
+        if (u.pathname === '/api/collision') return send(200,collisionFor(s));
         if (['/api/memory','/api/diff'].includes(u.pathname)) {
           const space = u.searchParams.get('space') || 'ram';
           if (!['ram','zram','vram','cram','vsram','regs'].includes(space)) throw Error('Unknown address space');
@@ -239,7 +245,7 @@ export function createServer(dir,options={}) {
         }
         return send(404,{error:'Unknown endpoint'});
       }
-      const files = {'/':'index.html','/app.mjs':'app.mjs','/decoder.mjs':'decoder.mjs','/renderer.mjs':'renderer.mjs','/transport.mjs':'transport.mjs','/presenter.mjs':'presenter.mjs','/cadence.mjs':'cadence.mjs','/rle.mjs':'rle.mjs','/style.css':'style.css','/movie-ui.mjs':'movie-ui.mjs','/note-model.mjs':'note-model.mjs','/catalog-ui.mjs':'catalog-ui.mjs'};
+      const files = {'/':'index.html','/app.mjs':'app.mjs','/decoder.mjs':'decoder.mjs','/renderer.mjs':'renderer.mjs','/transport.mjs':'transport.mjs','/presenter.mjs':'presenter.mjs','/cadence.mjs':'cadence.mjs','/rle.mjs':'rle.mjs','/style.css':'style.css','/movie-ui.mjs':'movie-ui.mjs','/note-model.mjs':'note-model.mjs','/catalog-ui.mjs':'catalog-ui.mjs','/collision.mjs':'collision.mjs','/collision-ui.mjs':'collision-ui.mjs'};
       const file = files[u.pathname]||(/^\/vendor\/[a-zA-Z0-9_.-]+\.(?:js|mjs)$/.test(u.pathname)?u.pathname.slice(1):null);
       if (!file) return send(404,{error:'Not found'});
       res.writeHead(200,{'Content-Type':file.endsWith('.html')?'text/html':file.endsWith('.css')?'text/css':'text/javascript',
